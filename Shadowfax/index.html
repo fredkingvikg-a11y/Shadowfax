@@ -490,7 +490,7 @@ var priceCache = {};
 var WL_COLORS = ['#38c8ff','#b44dff','#f5c842','#00c853','#ff3d57','#ff9800','#03a9f4','#e91e63'];
 var ANT = 'https://api.anthropic.com/v1/messages';
   var MDL = 'claude-sonnet-4-20250514';
-  var ON_VERCEL = window.location.hostname.indexOf('vercel.app') >= 0 || window.location.hostname.indexOf('netlify.app') >= 0;
+  var ON_VERCEL = window.location.hostname !== '';
 
 /* ─── STORAGE ─── */
 function sv(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
