@@ -39,7 +39,7 @@ module.exports = async function(req, res) {
     }
   });
 
-  const path = '/v1beta/models/gemini-1.5-flash:generateContent?key=' + apiKey;
+  const path = '/v1beta/models/gemini-2.0-flash:generateContent?key=' + apiKey;
 
   return new Promise(function(resolve) {
     const reqHttp = https.request({
