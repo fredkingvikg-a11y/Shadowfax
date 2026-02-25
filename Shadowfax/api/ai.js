@@ -41,7 +41,7 @@ function callGemini(messages, maxTokens, apiKey) {
 function callOpenRouter(messages, maxTokens, apiKey) {
   return new Promise(function(resolve) {
     const payload = JSON.stringify({
-      model: 'openrouter/auto',
+      model: 'meta-llama/llama-3.3-70b-instruct:free',
       max_tokens: maxTokens,
       messages: messages
     });
