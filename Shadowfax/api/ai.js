@@ -18,8 +18,15 @@ module.exports = async function(req, res) {
   }
 
   const messages = body && body.messages ? body.messages : [];
-  const userMessage = messages.map(function(m) { return m.content; }).join('\n');
-  const maxTokens = body && body.max_tokens ? body.max_tokens : 1500;
+  const userMessage = messages.map(function(m) {
+    return typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+  }).join('\n');
+  const maxTokens = (body && body.max_tokens) ? parseInt(body.max_tokens) : 1500;
+  
+  if (!userMessage || !userMessage.trim()) {
+    res.status(400).json({ error: 'Empty message' });
+    return;
+  }
 
   const geminiPayload = JSON.stringify({
     contents: [{ parts: [{ text: userMessage }] }],
