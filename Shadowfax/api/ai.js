@@ -64,7 +64,12 @@ function callOpenRouter(messages, maxTokens, apiKey) {
         try {
           var p = JSON.parse(data);
           var text = p.choices && p.choices[0] && p.choices[0].message &&
-                     p.choices[0].message.content ? p.choices[0].message.content : '';
+                     p.choices[0].message.content ? p.choices[0].message.content.trim() : '';
+          /* Try to extract JSON even from truncated response */
+          if (text) {
+            var lastBrace = text.lastIndexOf('}');
+            if (lastBrace > 0) text = text.substring(0, lastBrace + 1);
+          }
           if (!text) {
             resolve({ ok: false, error: 'empty response: ' + JSON.stringify(p).substring(0, 200) });
           } else {
