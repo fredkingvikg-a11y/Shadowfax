@@ -33,7 +33,7 @@ module.exports = async function(req, res) {
     generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 }
   });
 
-  const path = '/v1beta/models/gemini-1.5-flash:generateContent?key=' + apiKey;
+  const path = '/v1beta/models/gemini-1.5-flash-8b:generateContent?key=' + apiKey;
 
   return new Promise(function(resolve) {
     const reqHttp = https.request({
