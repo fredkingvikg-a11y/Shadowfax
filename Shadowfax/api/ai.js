@@ -103,21 +103,28 @@ module.exports = async function(req, res) {
     return;
   }
 
-  let result = { ok: false };
+  let geminiResult = { ok: false, error: 'not tried' };
+  let openrouterResult = { ok: false, error: 'not tried' };
 
   /* Try Gemini first if key exists */
   if (geminiKey) {
-    result = await callGemini(messages, maxTokens, geminiKey);
+    geminiResult = await callGemini(messages, maxTokens, geminiKey);
   }
 
   /* Fall back to OpenRouter if Gemini failed or hit quota */
-  if (!result.ok && openrouterKey) {
-    result = await callOpenRouter(messages, maxTokens, openrouterKey);
+  if (!geminiResult.ok && openrouterKey) {
+    openrouterResult = await callOpenRouter(messages, maxTokens, openrouterKey);
   }
+
+  const result = geminiResult.ok ? geminiResult : openrouterResult;
 
   if (result.ok && result.text) {
     res.status(200).json({ content: [{ type: 'text', text: result.text }] });
   } else {
-    res.status(500).json({ error: 'All AI providers failed', detail: result.error });
+    res.status(500).json({ 
+      error: 'All AI providers failed', 
+      gemini: geminiResult.error || 'unknown',
+      openrouter: openrouterResult.error || 'unknown'
+    });
   }
 };
