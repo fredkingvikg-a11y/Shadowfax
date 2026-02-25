@@ -495,6 +495,7 @@ var ANT = 'https://api.anthropic.com/v1/messages';
 /* ─── STORAGE ─── */
 function sv(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 function ld(k,fb){ try{ var v=localStorage.getItem(k); return v!==null ? JSON.parse(v) : fb; }catch(e){ return fb; } }
+function getKey(){ return ''; } /* key now lives server-side — stub kept to avoid errors */
 function gel(id){ return document.getElementById(id); }
 function setText(id,v){ var e=gel(id); if(e) e.textContent=v; }
 
