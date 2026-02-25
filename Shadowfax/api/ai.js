@@ -41,7 +41,7 @@ function callGemini(messages, maxTokens, apiKey) {
 function callOpenRouter(messages, maxTokens, apiKey) {
   return new Promise(function(resolve) {
     const payload = JSON.stringify({
-      model: 'meta-llama/llama-3.1-70b-instruct:free',
+      model: 'mistralai/mistral-7b-instruct:free',
       max_tokens: maxTokens,
       messages: messages
     });
@@ -65,7 +65,11 @@ function callOpenRouter(messages, maxTokens, apiKey) {
           var p = JSON.parse(data);
           var text = p.choices && p.choices[0] && p.choices[0].message &&
                      p.choices[0].message.content ? p.choices[0].message.content : '';
-          resolve({ ok: !!text, text: text });
+          if (!text) {
+            resolve({ ok: false, error: 'empty response: ' + JSON.stringify(p).substring(0, 200) });
+          } else {
+            resolve({ ok: true, text: text });
+          }
         } catch(e) { resolve({ ok: false, error: e.message }); }
       });
     });
