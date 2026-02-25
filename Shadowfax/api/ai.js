@@ -41,7 +41,7 @@ function callGemini(messages, maxTokens, apiKey) {
 function callOpenRouter(messages, maxTokens, apiKey) {
   return new Promise(function(resolve) {
     const payload = JSON.stringify({
-      model: 'mistralai/mistral-7b-instruct:free',
+      model: 'openrouter/auto',
       max_tokens: maxTokens,
       messages: messages
     });
