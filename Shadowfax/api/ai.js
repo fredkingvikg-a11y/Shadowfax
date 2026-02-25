@@ -97,6 +97,12 @@ module.exports = async function(req, res) {
   const geminiKey = process.env.GEMINI_API_KEY;
   const openrouterKey = process.env.OPENROUTER_API_KEY;
 
+  /* Debug — remove after fix */
+  if (!geminiKey && !openrouterKey) {
+    res.status(500).json({ error: 'No keys found', env: Object.keys(process.env).filter(function(k){ return k.includes('API'); }) });
+    return;
+  }
+
   let result = { ok: false };
 
   /* Try Gemini first if key exists */
