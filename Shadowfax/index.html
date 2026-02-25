@@ -694,8 +694,950 @@ async function runReport(tk,body,fill,stepsCard,steps,prog){
 
   // STEP 3+4 — AI: sentiment + thesis in one call
   var tradeCtx=isOpt
-    ?'Trade: '+tp.toUpperCase()+' option, strike $'+K+', premium $'+prem+', '+dte+'d to expiry, IV '+(sigma?(sigma*100).toFixed(1)+'%':'unknown')+', premium score '+(premScore||'N/A')+'/100'
-    :'Trade: Stock '+tk+(setupGrade?', setup grade '+setupGrade+', R:R '+( rr?rr.toFixed(2):'N/A'):'');
+    ?'OPTION TRADE MATH (this must drive your verdict, not company sentiment):\n- Type: '+tp.toUpperCase()+' | Strike: 
+
+  var prompt='You are a strict Goldman Sachs risk manager. Search for current info on "'+tk+'". Your job is to give an HONEST verdict on this specific trade — not a cheerful company overview. Bad setups must score low regardless of how good the company is.\n\n'+tradeCtx+'\n\nReturn ONLY valid JSON, no markdown: {"company":"Full Company Name","price":'+(S||0)+',"change":'+(liveQ?liveQ.chg:0)+',"pct":'+(liveQ?liveQ.pct:0)+',"sentiment":{"score":72,"direction":"Bullish","bull":65,"neut":25,"bear":10},"bbConsensus":{"buy":4,"neutral":1,"sell":0,"avgPT":210,"upside":12.5},"thesis":"Write a 3-sentence HONEST assessment of this specific trade (not the company). Call out if the setup is poor, OTM too far, or DTE too short. Be direct.","catalysts":["specific catalyst 1","specific catalyst 2","specific catalyst 3"],"risks":["specific risk 1","specific risk 2"],"earningsDays":45,"macroFit":"Brief macro context","verdict":{"score":REPLACE_WITH_HONEST_SCORE,"label":"High Conviction OR Moderate Setup OR Poor Setup OR Near-Certain Loss","action":"EXECUTE OR REVIEW OR AVOID","color":"green OR yellow OR red"}}\n\nVERDICT RULES — follow strictly:\n- Score 0-30: far OTM, DTE<5, delta<0.10 → action AVOID, label Near-Certain Loss\n- Score 31-50: OTM>8%, DTE<14, or delta<0.20 → action AVOID or REVIEW, label Poor Setup\n- Score 51-65: moderate setup → action REVIEW, label Moderate Setup\n- Score 66-80: good setup, ITM/ATM, DTE>21, delta>0.35 → action EXECUTE, label High Conviction\n- Score 81+: only for deep ITM, strong delta, ample DTE';
+
+  var txt=await callAI(prompt,true,1800);
+  var aiData=parseJSON(txt);
+  setStep('step-sent',true);setStep('step-thesis',true);fill.style.width='85%';
+
+  // STEP 5 — build verdict
+  setStep('step-verdict',true);fill.style.width='100%';
+
+  // Remove loading card, render report
+  setTimeout(function(){
+    stepsCard.remove();
+    prog.remove();
+    renderReport(tk,S,liveQ,isOpt,premScore,sigma,G,dte,tp,K,prem,setupGrade,rr,aiData,body);
+  },400);
+}
+
+function renderReport(tk,S,liveQ,isOpt,premScore,sigma,G,dte,tp,K,prem,setupGrade,rr,ai,body){
+  body.innerHTML='';
+  var pct=liveQ?liveQ.pct:0,chg=liveQ?liveQ.chg:0;
+
+  // ── VERDICT CARD
+  var vs=ai&&ai.verdict?ai.verdict.score:premScore||65;
+  var vl=ai&&ai.verdict?ai.verdict.label:vs>=75?'High Conviction':vs>=55?'Moderate Setup':'Proceed with Caution';
+  var va=ai&&ai.verdict?ai.verdict.action:vs>=65?'EXECUTE':'REVIEW';
+  var vc=vs>=70?'#00c853':vs>=50?'#f5c842':'#ff3d57';
+  var circ=263.9,offset=(circ-circ*vs/100).toFixed(1);
+  var vCard=document.createElement('div');
+  vCard.className='verdict-card';
+  vCard.style.cssText='background:linear-gradient(135deg,'+vc+'18,'+vc+'08);border:1px solid '+vc+'40;';
+  vCard.innerHTML=
+    '<div style="font-size:11px;font-weight:700;color:'+vc+';text-transform:uppercase;letter-spacing:1px;margin-bottom:14px">Pre-Trade Report — '+tk+'</div>'+
+    '<div class="verdict-ring"><svg viewBox="0 0 100 100" width="110" height="110"><circle cx="50" cy="50" r="42" stroke="rgba(255,255,255,.08)" stroke-width="9" fill="none"/><circle cx="50" cy="50" r="42" stroke="'+vc+'" stroke-width="9" fill="none" stroke-dasharray="'+circ+'" stroke-dashoffset="'+offset+'" stroke-linecap="round"/></svg><div class="verdict-num" style="color:'+vc+'">'+vs+'</div></div>'+
+    '<div class="verdict-label" style="color:'+vc+'">'+vl.toUpperCase()+'</div>'+
+    '<div class="verdict-action" style="color:'+vc+'">'+va+'</div>'+
+    '<div style="font-size:12px;color:var(--t3);margin-top:10px">$'+(S?S.toFixed(2):'—')+' <span class="'+(pct>=0?'up':'dn')+'">'+(pct>=0?'▲ +':'▼ ')+Math.abs(pct).toFixed(2)+'%</span>'+(ai&&ai.company?' · '+ai.company:'')+'</div>';
+  body.appendChild(vCard);
+
+  // ── SCORE GRID
+  var sent=ai&&ai.sentiment?ai.sentiment:{score:65,direction:'Bullish',bull:60,neut:28,bear:12};
+  var scoreGrid=document.createElement('div');scoreGrid.className='m2';
+  scoreGrid.innerHTML=
+    '<div class="mb"><div class="ml">Sentiment</div><div class="mv" style="color:var(--b)">'+sent.score+'</div><div class="ms '+(sent.score>=60?'up':sent.score>=40?'':'dn')+'">'+sent.direction+'</div></div>'+
+    (isOpt&&premScore!==null?'<div class="mb"><div class="ml">Premium Score</div><div class="mv" style="color:'+(premScore>=65?'var(--g)':premScore>=45?'var(--go)':'var(--r)')+'">'+premScore+'</div><div class="ms">'+(premScore>=65?'Worth It':premScore>=45?'Borderline':'Overpriced')+'</div></div>':'')+
+    (!isOpt&&setupGrade?'<div class="mb"><div class="ml">Setup Grade</div><div class="mv" style="color:'+(setupGrade==='A'||setupGrade==='B+'?'var(--g)':setupGrade==='C'?'var(--go)':'var(--r)')+'">'+setupGrade+'</div><div class="ms">R:R '+(rr?rr.toFixed(2):'—')+'x</div></div>':'')+
+    (isOpt&&sigma?'<div class="mb"><div class="ml">Implied Vol</div><div class="mv" style="color:var(--b)">'+(sigma*100).toFixed(1)+'%</div><div class="ms">'+(sigma<.35?'Below avg':sigma<.55?'Above avg':'Elevated IV')+'</div></div>':'')+
+    '<div class="mb"><div class="ml">BB Consensus</div><div class="mv up">'+(ai&&ai.bbConsensus?ai.bbConsensus.buy+' Buy':'—')+'</div><div class="ms">'+(ai&&ai.bbConsensus?'Avg PT $'+ai.bbConsensus.avgPT:'—')+'</div></div>'+
+    '<div class="mb"><div class="ml">Earnings</div><div class="mv" style="color:var(--go)">'+(ai&&ai.earningsDays?ai.earningsDays+'d':'—')+'</div><div class="ms">'+(ai&&ai.earningsDays&&ai.earningsDays<21?'IV elevated':'Normal')+'</div></div>';
+  body.appendChild(scoreGrid);
+
+  // ── THESIS
+  if(ai&&ai.thesis){
+    var tBox=document.createElement('div');tBox.className='thesis-box';
+    tBox.innerHTML='<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><div style="font-size:18px">🏦</div><div style="font-size:13px;font-weight:700;color:var(--b)">AI Trade Thesis</div></div><p>'+ai.thesis+'</p>';
+    body.appendChild(tBox);
+  }
+
+  // ── CATALYSTS + RISKS
+  if(ai&&(ai.catalysts||ai.risks)){
+    var crCard=document.createElement('div');crCard.className='card';
+    var html='';
+    if(ai.catalysts&&ai.catalysts.length){
+      html+='<div style="font-size:11px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">✦ Catalysts</div>';
+      ai.catalysts.forEach(function(c){html+='<div class="flag-item"><div class="flag-dot" style="background:var(--g)"></div><span>'+c+'</span></div>';});
+    }
+    if(ai.risks&&ai.risks.length){
+      html+='<div style="font-size:11px;font-weight:700;color:var(--r);text-transform:uppercase;letter-spacing:.7px;margin:'+(ai.catalysts?'14px':'0')+'px 0 8px">⚠ Risk Flags</div>';
+      ai.risks.forEach(function(r){html+='<div class="flag-item"><div class="flag-dot" style="background:var(--r)"></div><span>'+r+'</span></div>';});
+    }
+    crCard.innerHTML=html;
+    body.appendChild(crCard);
+  }
+
+  // ── MACRO FIT
+  if(ai&&ai.macroFit){
+    var mBox=document.createElement('div');
+    mBox.className='wb';
+    mBox.innerHTML='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--go)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><p>'+ai.macroFit+'</p>';
+    body.appendChild(mBox);
+  }
+
+  // ── SENTIMENT BARS
+  var sentCard=document.createElement('div');sentCard.className='card';
+  sentCard.innerHTML='<h4>Market Sentiment Breakdown</h4>'+
+    '<div style="display:flex;flex-direction:column;gap:8px">'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Bull</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.bull+'%;height:100%;background:var(--g);border-radius:3px"></div></div><span class="up" style="font-size:11px;font-weight:600;width:28px;text-align:right">'+sent.bull+'%</span></div>'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Neut</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.neut+'%;height:100%;background:var(--go);border-radius:3px"></div></div><span style="font-size:11px;font-weight:600;color:var(--go);width:28px;text-align:right">'+sent.neut+'%</span></div>'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Bear</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.bear+'%;height:100%;background:var(--r);border-radius:3px"></div></div><span class="dn" style="font-size:11px;font-weight:600;width:28px;text-align:right">'+sent.bear+'%</span></div>'+
+    '</div>';
+  body.appendChild(sentCard);
+
+  // ── OPTIONS DETAIL (if applicable)
+  if(isOpt&&G&&sigma){
+    var optCard=document.createElement('div');optCard.className='card';
+    var be=(tp==='call'?K+prem:K-prem).toFixed(2);
+    optCard.innerHTML='<h4>Options Details</h4>'+
+      '<div class="gr"><span style="font-size:13px">Break-Even</span><span style="font-weight:700">$'+be+'</span></div>'+
+      '<div class="gr"><span style="font-size:13px">Delta</span><span style="font-weight:700">'+(G.delta>=0?'+':'')+G.delta.toFixed(3)+'</span></div>'+
+      '<div class="gr"><span style="font-size:13px">Theta / Day</span><span style="font-weight:700;color:var(--r)">-$'+(Math.abs(G.theta)*100*prem).toFixed(2)+'</span></div>'+
+      '<div class="gr" style="border:none"><span style="font-size:13px">Days to Expiry</span><span style="font-weight:700">'+dte+'d</span></div>';
+    body.appendChild(optCard);
+  }
+
+  // ── DISCLAIMER + ROBINHOOD BUTTON
+  var disc=document.createElement('div');
+  disc.style.cssText='font-size:10px;color:var(--t3);text-align:center;padding:12px 0 8px;line-height:1.6';
+  disc.textContent='For informational purposes only. Not financial advice. Always do your own research before trading.';
+  body.appendChild(disc);
+
+  var rbBtn=document.createElement('button');
+  rbBtn.className='rpt-btn';
+  rbBtn.style.cssText='background:linear-gradient(135deg,#00c853,#00a844);color:#000;margin-bottom:14px';
+  rbBtn.textContent='Open Robinhood →';
+  rbBtn.addEventListener('click',function(){window.open('https://robinhood.com','_blank');});
+  body.appendChild(rbBtn);
+}
+
+gel('rpt-back').addEventListener('click',function(){gel('rpt-overlay').classList.remove('open');});
+
+/* ── SIGNALS ── */
+gel('stk').addEventListener('input',function(){this.value=this.value.toUpperCase();});
+gel('signals-load-btn').addEventListener('click',loadSignals);
+gel('stk').addEventListener('keydown',function(e){if(e.key==='Enter')loadSignals();});
+['st-ov','st-news','st-x','st-ana'].forEach(function(id){gel(id).addEventListener('click',function(){document.querySelectorAll('#screen-sentiment .tab').forEach(function(b){b.classList.remove('active');});this.classList.add('active');var map={'st-ov':'sent-ov','st-news':'sent-news','st-x':'sent-x','st-ana':'sent-ana'};Object.keys(map).forEach(function(k){var e=gel(map[k]);if(e)e.style.display=k===id?'block':'none';});});});
+async function loadSignals(){var raw=gel('stk').value.trim();if(!raw)return;var st=gel('sst');st.innerHTML='<span class="spin"></span>Loading signals for '+raw+'...';var prompt='Search for current real-time information about the stock ticker or company "'+raw+'". Return ONLY valid JSON (no markdown, no code blocks): {"ticker":"AAPL","company":"Apple Inc.","price":189.30,"change":2.6,"pct":1.4,"score":72,"direction":"Bullish","bull":68,"neut":22,"bear":10,"earningsDays":45,"analystPT":210,"ptUpside":10.9,"headlines":[{"text":"headline text","source":"Reuters","time":"2h ago","sentiment":"bullish"},{"text":"headline","source":"Bloomberg","time":"4h ago","sentiment":"neutral"},{"text":"headline","source":"FT","time":"6h ago","sentiment":"bearish"},{"text":"headline","source":"WSJ","time":"8h ago","sentiment":"bullish"}],"analysts":[{"firm":"Goldman Sachs","rating":"Buy","action":"Upgrade","pt":220,"upside":16.2},{"firm":"Morgan Stanley","rating":"Overweight","action":"Maintain","pt":210,"upside":10.9},{"firm":"JP Morgan","rating":"Neutral","action":"Maintain","pt":185,"upside":-2.3},{"firm":"Bank of America","rating":"Buy","action":"Maintain","pt":225,"upside":18.9},{"firm":"Citigroup","rating":"Neutral","action":"Maintain","pt":180,"upside":-4.9},{"firm":"UBS","rating":"Buy","action":"Upgrade","pt":215,"upside":13.5}],"xPosts":[{"name":"The Kobeissi Letter","handle":"@KobeissiLetter","role":"Institutional Macro","initials":"KL","color":"#38c8ff","body":"relevant commentary about this specific stock","sentiment":"bullish","likes":"8.4K","rt":"2.1K"},{"name":"Bill Ackman","handle":"@BillAckman","role":"Hedge Fund Pershing Square","initials":"BA","color":"#00c853","body":"relevant commentary","sentiment":"bullish","likes":"14K","rt":"3.8K"},{"name":"Chamath Palihapitiya","handle":"@chamath","role":"VC Social Capital","initials":"CP","color":"#b44dff","body":"relevant commentary","sentiment":"neutral","likes":"22K","rt":"5.2K"},{"name":"Raoul Pal","handle":"@RaoulGMI","role":"Macro Investor GMI","initials":"RP","color":"#f5c842","body":"relevant commentary","sentiment":"bullish","likes":"9.7K","rt":"2.9K"}]}';var txt=await callAI(prompt,true,2500);var d=parseJSON(txt);if(d){st.innerHTML='<span style="color:var(--g)">&#10003; Live signals loaded for '+(d.ticker||raw.toUpperCase())+(d.company?' — '+d.company:'')+'</span>';renderSignals(d);}else{st.innerHTML='<span style="color:var(--r)">&#10007; Could not load signals — check your /api/ai endpoint is running</span>';}}
+function renderSignals(d){var tk=d.ticker||'—';var ov=gel('sent-ov');ov.innerHTML='';var ovCard=document.createElement('div');ovCard.className='card';var sc=d.score||0,dir=(d.direction||'').toUpperCase();var dirPill='pg';if(sc<60)dirPill='pgo';if(sc<40)dirPill='pr';ovCard.innerHTML='<h4>Live Sentiment — '+tk+'</h4>';var inner=document.createElement('div');inner.style.cssText='display:flex;gap:10px';inner.innerHTML='<div style="flex:1;background:var(--gd);border-radius:var(--rs);padding:14px;text-align:center"><div style="font-size:26px;font-weight:800;color:var(--g)">'+sc+'</div><div style="font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-top:2px">Score</div><div class="pill '+dirPill+'" style="margin-top:6px">'+dir+'</div></div>'+'<div style="flex:2;display:flex;flex-direction:column;gap:7px;justify-content:center">'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.bull||0)+'%;height:100%;background:var(--g);border-radius:3px"></div></div><span class="up" style="font-size:11px;font-weight:600;min-width:30px">'+(d.bull||0)+'%</span><span style="font-size:10px;color:var(--t3)">Bull</span></div>'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.neut||0)+'%;height:100%;background:var(--go);border-radius:3px"></div></div><span style="font-size:11px;font-weight:600;color:var(--go);min-width:30px">'+(d.neut||0)+'%</span><span style="font-size:10px;color:var(--t3)">Neut</span></div>'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.bear||0)+'%;height:100%;background:var(--r);border-radius:3px"></div></div><span class="dn" style="font-size:11px;font-weight:600;min-width:30px">'+(d.bear||0)+'%</span><span style="font-size:10px;color:var(--t3)">Bear</span></div>'+'</div>';ovCard.appendChild(inner);var m2=document.createElement('div');m2.className='m2';m2.style.marginTop='11px';m2.innerHTML='<div class="mb"><div class="ml">News</div><div class="mv '+(sc>=60?'up':'dn')+'">'+(d.direction||'—')+'</div><div class="ms">'+(d.headlines?d.headlines.length:0)+' headlines</div></div>'+'<div class="mb"><div class="ml">X/Twitter</div><div class="mv '+(sc>=60?'up':'')+'">'+( d.xPosts&&d.xPosts.length?'Active':'—')+'</div><div class="ms">Pro traders</div></div>'+'<div class="mb"><div class="ml">Avg PT</div><div class="mv">$'+(d.analystPT||'—')+'</div><div class="ms '+((d.ptUpside||0)>=0?'up':'dn')+'">'+(( d.ptUpside||0)>=0?'+':'')+(d.ptUpside||0)+'%</div></div>'+'<div class="mb"><div class="ml">Earnings</div><div class="mv" style="color:var(--go)">'+(d.earningsDays?d.earningsDays+'d':'—')+'</div><div class="ms">'+((d.earningsDays||99)<21?'IV elevated':'Normal')+'</div></div>';ovCard.appendChild(m2);ov.appendChild(ovCard);var nw=gel('sent-news');nw.innerHTML='';var nCard=document.createElement('div');nCard.className='card';nCard.innerHTML='<h4>Headlines — '+tk+'</h4>';(d.headlines||[]).forEach(function(h){var dc=h.sentiment==='bullish'?'var(--g)':h.sentiment==='bearish'?'var(--r)':'var(--go)';var pc=h.sentiment==='bullish'?'pg':h.sentiment==='bearish'?'pr':'pgo';var item=document.createElement('div');item.className='ni';item.innerHTML='<div class="nd" style="background:'+dc+'"></div><div><div style="font-size:13px;line-height:1.5;color:var(--t2)">'+h.text+'</div><div style="font-size:10px;color:var(--t3);margin-top:3px">'+h.source+' '+h.time+'</div><span class="pill '+pc+'" style="margin-top:4px">'+(h.sentiment||'').toUpperCase()+'</span></div>';nCard.appendChild(item);});nw.appendChild(nCard);var xw=gel('sent-x');xw.innerHTML='';var xHdr=document.createElement('div');xHdr.style.cssText='background:var(--bg3);border:1px solid var(--bd);border-radius:var(--rs);padding:10px 13px;margin-bottom:13px;font-size:11px;color:var(--t3)';xHdr.textContent='Verified institutional investors and professional traders only';xw.appendChild(xHdr);(d.xPosts||[]).forEach(function(x){var sc2=x.sentiment==='bullish'?'pg':x.sentiment==='bearish'?'pr':'pgo';var xp=document.createElement('div');xp.className='xp';xp.innerHTML='<div style="display:flex;align-items:center;gap:9px;margin-bottom:10px"><div class="xa" style="background:'+x.color+'22;color:'+x.color+'">'+x.initials+'</div><div style="flex:1"><div style="display:flex;align-items:center"><span style="font-size:13px;font-weight:700">'+x.name+'</span><div class="xv">&#10003;</div></div><div style="font-size:11px;color:var(--t3)">'+x.handle+' — '+x.role+'</div></div><span class="pill '+sc2+'" style="font-size:9px">'+(x.sentiment||'').toUpperCase()+'</span></div><div style="font-size:13px;line-height:1.6;color:var(--t2);margin-bottom:9px">'+x.body+'</div><div style="display:flex;gap:13px"><span style="font-size:11px;color:var(--t3)">'+x.likes+' likes</span><span style="font-size:11px;color:var(--t3)">'+x.rt+' retweets</span></div>';xw.appendChild(xp);});var xFoot=document.createElement('div');xFoot.style.cssText='text-align:center;font-size:10px;color:var(--t3);padding:4px 0 8px';xFoot.textContent='For market context only. Not affiliated with these individuals.';xw.appendChild(xFoot);var aw=gel('sent-ana');aw.innerHTML='';var aCard=document.createElement('div');aCard.className='card';aCard.innerHTML='<h4>Analyst Ratings — '+tk+'</h4>';(d.analysts||[]).forEach(function(a){var up2=a.upside>=0;var rc=(a.rating==='Buy'||a.rating==='Overweight')?'var(--g)':(a.rating==='Sell'||a.rating==='Underweight')?'var(--r)':'var(--go)';var sh=a.firm.indexOf('Goldman')>=0?'GS':a.firm.indexOf('Morgan Stanley')>=0?'MS':a.firm.indexOf('JP')>=0?'JPM':a.firm.indexOf('Bank')>=0?'BAC':a.firm.indexOf('Citi')>=0?'CITI':'UBS';var row=document.createElement('div');row.className='br';row.innerHTML='<div style="display:flex;align-items:center;gap:9px"><div class="bl" style="background:var(--bd3);color:var(--b)">'+sh+'</div><div><div style="font-size:13px;font-weight:700">'+a.firm+'</div><div style="font-size:11px;color:'+rc+'">'+a.action+' — '+a.rating+'</div></div></div><div style="text-align:right"><div style="font-size:17px;font-weight:800;color:'+(up2?'var(--g)':'var(--r)')+'">$'+a.pt+'</div><div style="font-size:11px;color:'+(up2?'var(--g)':'var(--r)')+'">'+(up2?'+':'')+(a.upside||0).toFixed(1)+'%</div></div>';aCard.appendChild(row);});aw.appendChild(aCard);}
+
+/* ── MEDIA ── */
+function openURL(url){window.open(url,'_blank');}
+[['bb-open','https://www.bloomberg.com/live-tv'],['bb-btn','https://www.bloomberg.com/live-tv'],['cnbc-open','https://www.cnbc.com/live-tv/'],['cnbc-btn','https://www.cnbc.com/live-tv/'],['yf-open','https://finance.yahoo.com/live/'],['yf-btn','https://finance.yahoo.com/live/'],['mw-btn','https://www.marketwatch.com'],['sa-btn','https://seekingalpha.com'],['uw-btn','https://unusualwhales.com'],['bz-btn','https://www.benzinga.com'],['fv-btn','https://finviz.com'],['ba-btn','https://www.barrons.com'],['tv-btn','https://www.tradingview.com'],['os-btn','https://optionstrat.com'],['cb-btn','https://www.cboe.com'],['fred-btn','https://fred.stlouisfed.org'],['sec-btn','https://www.sec.gov/cgi-bin/browse-edgar'],['yo-btn','https://finance.yahoo.com/options']].forEach(function(pair){var e=gel(pair[0]);if(e)e.addEventListener('click',(function(url){return function(){openURL(url);};})(pair[1]));});
+['mt-live','mt-charts','mt-news','mt-tools'].forEach(function(id){gel(id).addEventListener('click',function(){document.querySelectorAll('#screen-media .tab').forEach(function(b){b.classList.remove('active');});this.classList.add('active');var map={'mt-live':'m-live','mt-charts':'m-charts','mt-news':'m-news','mt-tools':'m-tools'};Object.keys(map).forEach(function(k){var e=gel(map[k]);if(e)e.style.display=k===id?'block':'none';});});});
+
+/* ── JOURNAL ── */
+gel('open-at-btn').addEventListener('click',openAT);gel('log-first-btn').addEventListener('click',openAT);gel('jt-save-btn').addEventListener('click',saveJTrade);gel('jt-cancel-btn').addEventListener('click',function(){gel('atm').classList.add('hidden');});gel('jt-opt-btn').addEventListener('click',function(){setJtType('option',this);});gel('jt-stk-btn').addEventListener('click',function(){setJtType('stock',this);});gel('ai-recs-btn').addEventListener('click',getAIRecs);gel('clear-j-btn').addEventListener('click',function(){if(confirm('Clear all journal trades?')){journal=[];sv('sfx_journal',[]);renderJournal();}});gel('jt-tk').addEventListener('input',function(){this.value=this.value.toUpperCase();});
+function openAT(){gel('atm').classList.remove('hidden');gel('jt-date').value=new Date().toISOString().split('T')[0];}
+function setJtType(tp,btn){jtType=tp;document.querySelectorAll('#jt-seg .sb').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');gel('jt-of').style.display=tp==='option'?'block':'none';gel('jt-sf').style.display=tp==='stock'?'block':'none';}
+function saveJTrade(){var tk=(gel('jt-tk').value||'').trim().toUpperCase();if(!tk)return;var dir=gel('jt-dir').value,date=gel('jt-date').value,en,ex,qty,pnl,ret,be;if(jtType==='option'){en=parseFloat(gel('jt-en').value)||0;ex=parseFloat(gel('jt-ex').value)||0;qty=parseInt(gel('jt-qty').value)||1;var str=parseFloat(gel('jt-str').value)||0;pnl=(ex-en)*100*qty;ret=en>0?(ex-en)/en*100:0;be=dir==='Call'?str+en:str-en;}else{en=parseFloat(gel('jts-en').value)||0;ex=parseFloat(gel('jts-ex').value)||0;qty=parseInt(gel('jts-qty').value)||0;pnl=(ex-en)*qty;ret=en>0?(ex-en)/en*100:0;be=en;}journal.push({id:Date.now(),date:date,ticker:tk,direction:dir,assetClass:jtType,entry:en,exit:ex,qty:qty,pnl:parseFloat(pnl.toFixed(2)),retPct:parseFloat(ret.toFixed(2)),breakeven:parseFloat(be.toFixed(2)),notes:gel('jt-notes').value.trim(),status:ex>0?'closed':'open'});sv('sfx_journal',journal);renderJournal();gel('atm').classList.add('hidden');['jt-tk','jt-en','jt-ex','jt-str','jts-en','jts-ex','jts-qty','jt-notes'].forEach(function(id){var e=gel(id);if(e)e.value='';});gel('jt-qty').value='1';}
+function renderJournal(){var has=journal.length>0;gel('j-empty').style.display=has?'none':'block';gel('j-stats').style.display=has?'grid':'none';gel('jchart').style.display=has?'block':'none';gel('jai-wrap').style.display=has?'block':'none';gel('j-tt').style.display=has?'block':'none';gel('j-trades').innerHTML='';if(!has)return;var closed=journal.filter(function(t){return t.status==='closed';});var wr=closed.length?Math.round(closed.filter(function(t){return t.pnl>0;}).length/closed.length*100):0;var tot=journal.reduce(function(s,t){return s+t.pnl;},0);var jwrE=gel('jwr');if(jwrE){jwrE.textContent=wr+'%';jwrE.className=wr>=50?'up':'dn';}var jpE=gel('jpnl');if(jpE){jpE.textContent=(tot>=0?'+$':'-$')+Math.abs(tot).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});jpE.className=tot>=0?'up':'dn';}setText('jcnt',journal.length);drawChart(journal,tot);var frag=document.createDocumentFragment();journal.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);}).forEach(function(t){var up2=t.pnl>=0,pc=t.assetClass==='option'?(t.direction==='Call'?'pb':'pr'):(t.direction==='Long'?'pg':'pr');var el=document.createElement('div');el.className='ti';el.innerHTML='<div style="display:flex;justify-content:space-between;margin-bottom:10px"><div><div style="font-size:16px;font-weight:800">'+t.ticker+' <span class="pill '+pc+'">'+t.direction+'</span></div><div style="font-size:10px;color:var(--t3);margin-top:2px">'+(t.assetClass==='option'?'BE $'+t.breakeven+' — ':'')+t.date+'</div></div><div style="text-align:right"><div class="'+(up2?'up':'dn')+'" style="font-size:18px;font-weight:800">'+(up2?'+$':'-$')+Math.abs(t.pnl).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</div><div style="font-size:10px;color:var(--t3);margin-top:2px">'+t.status+'</div></div></div><div class="tst"><div class="tsi">Entry<span>$'+t.entry+'</span></div><div class="tsi">Exit<span>'+(t.exit?'$'+t.exit:'Open')+'</span></div><div class="tsi">Qty<span>'+t.qty+'</span></div><div class="tsi">Return<span class="'+(up2?'up':'dn')+'">'+(up2?'+':'')+t.retPct.toFixed(1)+'%</span></div></div>'+(t.notes?'<div style="font-size:11px;color:var(--t3);margin-top:8px;padding-top:8px;border-top:1px solid var(--bd)">'+t.notes+'</div>':'');frag.appendChild(el);});gel('j-trades').appendChild(frag);}
+function drawChart(trades,tot){var svg=gel('jsvg');if(!svg)return;var jcv=gel('jcv');if(jcv){jcv.textContent=(tot>=0?'+$':'-$')+Math.abs(tot).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});jcv.className=tot>=0?'up':'dn';}var sorted=trades.slice().sort(function(a,b){return new Date(a.date)-new Date(b.date);}),cum=0;var pts=[0].concat(sorted.map(function(t){cum+=t.pnl;return cum;}));var mn=Math.min.apply(null,pts),mx=Math.max.apply(null,pts),rng=mx-mn||1;var px=function(i){return i/(pts.length-1||1)*360+20;},py=function(v){return 170-20-(v-mn)/rng*130;};var poly=pts.map(function(v,i){return px(i)+','+py(v);}).join(' '),col=tot>=0?'#00c853':'#ff3d57';svg.innerHTML='<defs><linearGradient id="cg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="'+col+'" stop-opacity=".28"/><stop offset="100%" stop-color="'+col+'" stop-opacity="0"/></linearGradient></defs><polyline points="'+poly+'" stroke="'+col+'" stroke-width="2" fill="none"/><polygon points="'+poly+' '+px(pts.length-1)+',170 '+px(0)+',170" fill="url(#cg)"/>';}
+async function getAIRecs(){if(journal.length<2){alert('Log at least 2 trades to get AI coaching.');return;}var btn=gel('ai-recs-btn');if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span>Analyzing...';}var closed=journal.filter(function(t){return t.status==='closed';});var wr=closed.length?Math.round(closed.filter(function(t){return t.pnl>0;}).length/closed.length*100):0;var summary={trades:journal.length,winRate:wr,totalPnl:journal.reduce(function(s,t){return s+t.pnl;},0),recentTrades:closed.slice(-10).map(function(t){return{ticker:t.ticker,direction:t.direction,pnl:t.pnl,ret:t.retPct};})};var prompt='You are a professional trading coach. Analyze this journal and give specific actionable coaching. Account: $'+(user.accountSize||'unknown')+', Risk: '+(user.riskPct||2)+'% per trade. Journal: '+JSON.stringify(summary)+'. Return ONLY this JSON with no markdown: {"summary":"1-sentence assessment","recommendations":[{"title":"action title","detail":"specific advice","priority":"high"},{"title":"title","detail":"advice","priority":"medium"},{"title":"title","detail":"advice","priority":"low"}]}';var raw=await callAI(prompt,false,1000);var d=parseJSON(raw);var pC={high:'var(--r)',medium:'var(--go)',low:'var(--g)'};if(d){gel('jai').innerHTML='<p style="font-size:13px;color:var(--t2);margin-bottom:12px;line-height:1.5">'+(d.summary||'')+'</p>'+(d.recommendations||[]).map(function(r){return'<div class="ai-rec"><div class="art" style="color:'+(pC[r.priority]||'var(--b)')+'">'+r.title+' <span style="font-size:9px;opacity:.7;text-transform:uppercase;letter-spacing:.5px">'+r.priority+'</span></div><div class="ard">'+r.detail+'</div></div>';}).join('')+'<button class="abtn" style="background:var(--b);font-size:12px;padding:10px;margin-top:10px" id="ai-refresh-btn">Refresh Analysis</button>';var rb=gel('ai-refresh-btn');if(rb)rb.addEventListener('click',getAIRecs);}else{gel('jai').innerHTML='<p style="color:var(--r);font-size:13px">Could not generate analysis.</p><button class="abtn" style="background:var(--b);font-size:13px;padding:11px;margin-top:8px" id="ai-retry-btn">Retry</button>';var rt=gel('ai-retry-btn');if(rt)rt.addEventListener('click',getAIRecs);}}
+
+/* ── INIT ── */
+(function(){
+  var u=ld('sfx_user',null);if(u&&u.name)user=u;
+  applyUser();
+  var t=ld('sfx_theme','dark');applyTheme(t);highlightThBtn(t);
+  journal=ld('sfx_journal',[]);
+  watchlist=ld('sfx_watchlist',['AAPL','PLTR','NVDA','SPY']);
+  renderWatchlist(null);renderJournal();populateExpiries();loadPrices();
+  setInterval(loadPrices,90000);
+})();
+})();
+</script>
+</body>
+</html>
++K+' | Stock price: 
+
+  var prompt='You are a Goldman Sachs senior analyst. Search for current information about "'+tk+'" and generate a comprehensive pre-trade report. Current price: $'+(S?S.toFixed(2):'unknown')+'. '+tradeCtx+'. Return ONLY valid JSON, no markdown: {"company":"Full Company Name","price":'+(S||0)+',"change":'+(liveQ?liveQ.chg:0)+',"pct":'+(liveQ?liveQ.pct:0)+',"sentiment":{"score":72,"direction":"Bullish","bull":65,"neut":25,"bear":10},"bbConsensus":{"buy":4,"neutral":1,"sell":0,"avgPT":210,"upside":12.5},"thesis":"Write a 3-sentence Goldman Sachs style institutional trade thesis here. Be specific to the company and current market conditions.","catalysts":["specific catalyst 1","specific catalyst 2","specific catalyst 3"],"risks":["specific risk 1","specific risk 2"],"earningsDays":45,"macroFit":"Bullish macro regime — rate environment favorable for growth stocks","verdict":{"score":76,"label":"High Conviction","action":"EXECUTE","color":"green"}}';
+
+  var txt=await callAI(prompt,true,1800);
+  var aiData=parseJSON(txt);
+  setStep('step-sent',true);setStep('step-thesis',true);fill.style.width='85%';
+
+  // STEP 5 — build verdict
+  setStep('step-verdict',true);fill.style.width='100%';
+
+  // Remove loading card, render report
+  setTimeout(function(){
+    stepsCard.remove();
+    prog.remove();
+    renderReport(tk,S,liveQ,isOpt,premScore,sigma,G,dte,tp,K,prem,setupGrade,rr,aiData,body);
+  },400);
+}
+
+function renderReport(tk,S,liveQ,isOpt,premScore,sigma,G,dte,tp,K,prem,setupGrade,rr,ai,body){
+  body.innerHTML='';
+  var pct=liveQ?liveQ.pct:0,chg=liveQ?liveQ.chg:0;
+
+  // ── VERDICT CARD
+  var vs=ai&&ai.verdict?ai.verdict.score:premScore||65;
+  var vl=ai&&ai.verdict?ai.verdict.label:vs>=75?'High Conviction':vs>=55?'Moderate Setup':'Proceed with Caution';
+  var va=ai&&ai.verdict?ai.verdict.action:vs>=65?'EXECUTE':'REVIEW';
+  var vc=vs>=70?'#00c853':vs>=50?'#f5c842':'#ff3d57';
+  var circ=263.9,offset=(circ-circ*vs/100).toFixed(1);
+  var vCard=document.createElement('div');
+  vCard.className='verdict-card';
+  vCard.style.cssText='background:linear-gradient(135deg,'+vc+'18,'+vc+'08);border:1px solid '+vc+'40;';
+  vCard.innerHTML=
+    '<div style="font-size:11px;font-weight:700;color:'+vc+';text-transform:uppercase;letter-spacing:1px;margin-bottom:14px">Pre-Trade Report — '+tk+'</div>'+
+    '<div class="verdict-ring"><svg viewBox="0 0 100 100" width="110" height="110"><circle cx="50" cy="50" r="42" stroke="rgba(255,255,255,.08)" stroke-width="9" fill="none"/><circle cx="50" cy="50" r="42" stroke="'+vc+'" stroke-width="9" fill="none" stroke-dasharray="'+circ+'" stroke-dashoffset="'+offset+'" stroke-linecap="round"/></svg><div class="verdict-num" style="color:'+vc+'">'+vs+'</div></div>'+
+    '<div class="verdict-label" style="color:'+vc+'">'+vl.toUpperCase()+'</div>'+
+    '<div class="verdict-action" style="color:'+vc+'">'+va+'</div>'+
+    '<div style="font-size:12px;color:var(--t3);margin-top:10px">$'+(S?S.toFixed(2):'—')+' <span class="'+(pct>=0?'up':'dn')+'">'+(pct>=0?'▲ +':'▼ ')+Math.abs(pct).toFixed(2)+'%</span>'+(ai&&ai.company?' · '+ai.company:'')+'</div>';
+  body.appendChild(vCard);
+
+  // ── SCORE GRID
+  var sent=ai&&ai.sentiment?ai.sentiment:{score:65,direction:'Bullish',bull:60,neut:28,bear:12};
+  var scoreGrid=document.createElement('div');scoreGrid.className='m2';
+  scoreGrid.innerHTML=
+    '<div class="mb"><div class="ml">Sentiment</div><div class="mv" style="color:var(--b)">'+sent.score+'</div><div class="ms '+(sent.score>=60?'up':sent.score>=40?'':'dn')+'">'+sent.direction+'</div></div>'+
+    (isOpt&&premScore!==null?'<div class="mb"><div class="ml">Premium Score</div><div class="mv" style="color:'+(premScore>=65?'var(--g)':premScore>=45?'var(--go)':'var(--r)')+'">'+premScore+'</div><div class="ms">'+(premScore>=65?'Worth It':premScore>=45?'Borderline':'Overpriced')+'</div></div>':'')+
+    (!isOpt&&setupGrade?'<div class="mb"><div class="ml">Setup Grade</div><div class="mv" style="color:'+(setupGrade==='A'||setupGrade==='B+'?'var(--g)':setupGrade==='C'?'var(--go)':'var(--r)')+'">'+setupGrade+'</div><div class="ms">R:R '+(rr?rr.toFixed(2):'—')+'x</div></div>':'')+
+    (isOpt&&sigma?'<div class="mb"><div class="ml">Implied Vol</div><div class="mv" style="color:var(--b)">'+(sigma*100).toFixed(1)+'%</div><div class="ms">'+(sigma<.35?'Below avg':sigma<.55?'Above avg':'Elevated IV')+'</div></div>':'')+
+    '<div class="mb"><div class="ml">BB Consensus</div><div class="mv up">'+(ai&&ai.bbConsensus?ai.bbConsensus.buy+' Buy':'—')+'</div><div class="ms">'+(ai&&ai.bbConsensus?'Avg PT $'+ai.bbConsensus.avgPT:'—')+'</div></div>'+
+    '<div class="mb"><div class="ml">Earnings</div><div class="mv" style="color:var(--go)">'+(ai&&ai.earningsDays?ai.earningsDays+'d':'—')+'</div><div class="ms">'+(ai&&ai.earningsDays&&ai.earningsDays<21?'IV elevated':'Normal')+'</div></div>';
+  body.appendChild(scoreGrid);
+
+  // ── THESIS
+  if(ai&&ai.thesis){
+    var tBox=document.createElement('div');tBox.className='thesis-box';
+    tBox.innerHTML='<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><div style="font-size:18px">🏦</div><div style="font-size:13px;font-weight:700;color:var(--b)">AI Trade Thesis</div></div><p>'+ai.thesis+'</p>';
+    body.appendChild(tBox);
+  }
+
+  // ── CATALYSTS + RISKS
+  if(ai&&(ai.catalysts||ai.risks)){
+    var crCard=document.createElement('div');crCard.className='card';
+    var html='';
+    if(ai.catalysts&&ai.catalysts.length){
+      html+='<div style="font-size:11px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">✦ Catalysts</div>';
+      ai.catalysts.forEach(function(c){html+='<div class="flag-item"><div class="flag-dot" style="background:var(--g)"></div><span>'+c+'</span></div>';});
+    }
+    if(ai.risks&&ai.risks.length){
+      html+='<div style="font-size:11px;font-weight:700;color:var(--r);text-transform:uppercase;letter-spacing:.7px;margin:'+(ai.catalysts?'14px':'0')+'px 0 8px">⚠ Risk Flags</div>';
+      ai.risks.forEach(function(r){html+='<div class="flag-item"><div class="flag-dot" style="background:var(--r)"></div><span>'+r+'</span></div>';});
+    }
+    crCard.innerHTML=html;
+    body.appendChild(crCard);
+  }
+
+  // ── MACRO FIT
+  if(ai&&ai.macroFit){
+    var mBox=document.createElement('div');
+    mBox.className='wb';
+    mBox.innerHTML='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--go)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><p>'+ai.macroFit+'</p>';
+    body.appendChild(mBox);
+  }
+
+  // ── SENTIMENT BARS
+  var sentCard=document.createElement('div');sentCard.className='card';
+  sentCard.innerHTML='<h4>Market Sentiment Breakdown</h4>'+
+    '<div style="display:flex;flex-direction:column;gap:8px">'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Bull</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.bull+'%;height:100%;background:var(--g);border-radius:3px"></div></div><span class="up" style="font-size:11px;font-weight:600;width:28px;text-align:right">'+sent.bull+'%</span></div>'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Neut</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.neut+'%;height:100%;background:var(--go);border-radius:3px"></div></div><span style="font-size:11px;font-weight:600;color:var(--go);width:28px;text-align:right">'+sent.neut+'%</span></div>'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Bear</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.bear+'%;height:100%;background:var(--r);border-radius:3px"></div></div><span class="dn" style="font-size:11px;font-weight:600;width:28px;text-align:right">'+sent.bear+'%</span></div>'+
+    '</div>';
+  body.appendChild(sentCard);
+
+  // ── OPTIONS DETAIL (if applicable)
+  if(isOpt&&G&&sigma){
+    var optCard=document.createElement('div');optCard.className='card';
+    var be=(tp==='call'?K+prem:K-prem).toFixed(2);
+    optCard.innerHTML='<h4>Options Details</h4>'+
+      '<div class="gr"><span style="font-size:13px">Break-Even</span><span style="font-weight:700">$'+be+'</span></div>'+
+      '<div class="gr"><span style="font-size:13px">Delta</span><span style="font-weight:700">'+(G.delta>=0?'+':'')+G.delta.toFixed(3)+'</span></div>'+
+      '<div class="gr"><span style="font-size:13px">Theta / Day</span><span style="font-weight:700;color:var(--r)">-$'+(Math.abs(G.theta)*100*prem).toFixed(2)+'</span></div>'+
+      '<div class="gr" style="border:none"><span style="font-size:13px">Days to Expiry</span><span style="font-weight:700">'+dte+'d</span></div>';
+    body.appendChild(optCard);
+  }
+
+  // ── DISCLAIMER + ROBINHOOD BUTTON
+  var disc=document.createElement('div');
+  disc.style.cssText='font-size:10px;color:var(--t3);text-align:center;padding:12px 0 8px;line-height:1.6';
+  disc.textContent='For informational purposes only. Not financial advice. Always do your own research before trading.';
+  body.appendChild(disc);
+
+  var rbBtn=document.createElement('button');
+  rbBtn.className='rpt-btn';
+  rbBtn.style.cssText='background:linear-gradient(135deg,#00c853,#00a844);color:#000;margin-bottom:14px';
+  rbBtn.textContent='Open Robinhood →';
+  rbBtn.addEventListener('click',function(){window.open('https://robinhood.com','_blank');});
+  body.appendChild(rbBtn);
+}
+
+gel('rpt-back').addEventListener('click',function(){gel('rpt-overlay').classList.remove('open');});
+
+/* ── SIGNALS ── */
+gel('stk').addEventListener('input',function(){this.value=this.value.toUpperCase();});
+gel('signals-load-btn').addEventListener('click',loadSignals);
+gel('stk').addEventListener('keydown',function(e){if(e.key==='Enter')loadSignals();});
+['st-ov','st-news','st-x','st-ana'].forEach(function(id){gel(id).addEventListener('click',function(){document.querySelectorAll('#screen-sentiment .tab').forEach(function(b){b.classList.remove('active');});this.classList.add('active');var map={'st-ov':'sent-ov','st-news':'sent-news','st-x':'sent-x','st-ana':'sent-ana'};Object.keys(map).forEach(function(k){var e=gel(map[k]);if(e)e.style.display=k===id?'block':'none';});});});
+async function loadSignals(){var raw=gel('stk').value.trim();if(!raw)return;var st=gel('sst');st.innerHTML='<span class="spin"></span>Loading signals for '+raw+'...';var prompt='Search for current real-time information about the stock ticker or company "'+raw+'". Return ONLY valid JSON (no markdown, no code blocks): {"ticker":"AAPL","company":"Apple Inc.","price":189.30,"change":2.6,"pct":1.4,"score":72,"direction":"Bullish","bull":68,"neut":22,"bear":10,"earningsDays":45,"analystPT":210,"ptUpside":10.9,"headlines":[{"text":"headline text","source":"Reuters","time":"2h ago","sentiment":"bullish"},{"text":"headline","source":"Bloomberg","time":"4h ago","sentiment":"neutral"},{"text":"headline","source":"FT","time":"6h ago","sentiment":"bearish"},{"text":"headline","source":"WSJ","time":"8h ago","sentiment":"bullish"}],"analysts":[{"firm":"Goldman Sachs","rating":"Buy","action":"Upgrade","pt":220,"upside":16.2},{"firm":"Morgan Stanley","rating":"Overweight","action":"Maintain","pt":210,"upside":10.9},{"firm":"JP Morgan","rating":"Neutral","action":"Maintain","pt":185,"upside":-2.3},{"firm":"Bank of America","rating":"Buy","action":"Maintain","pt":225,"upside":18.9},{"firm":"Citigroup","rating":"Neutral","action":"Maintain","pt":180,"upside":-4.9},{"firm":"UBS","rating":"Buy","action":"Upgrade","pt":215,"upside":13.5}],"xPosts":[{"name":"The Kobeissi Letter","handle":"@KobeissiLetter","role":"Institutional Macro","initials":"KL","color":"#38c8ff","body":"relevant commentary about this specific stock","sentiment":"bullish","likes":"8.4K","rt":"2.1K"},{"name":"Bill Ackman","handle":"@BillAckman","role":"Hedge Fund Pershing Square","initials":"BA","color":"#00c853","body":"relevant commentary","sentiment":"bullish","likes":"14K","rt":"3.8K"},{"name":"Chamath Palihapitiya","handle":"@chamath","role":"VC Social Capital","initials":"CP","color":"#b44dff","body":"relevant commentary","sentiment":"neutral","likes":"22K","rt":"5.2K"},{"name":"Raoul Pal","handle":"@RaoulGMI","role":"Macro Investor GMI","initials":"RP","color":"#f5c842","body":"relevant commentary","sentiment":"bullish","likes":"9.7K","rt":"2.9K"}]}';var txt=await callAI(prompt,true,2500);var d=parseJSON(txt);if(d){st.innerHTML='<span style="color:var(--g)">&#10003; Live signals loaded for '+(d.ticker||raw.toUpperCase())+(d.company?' — '+d.company:'')+'</span>';renderSignals(d);}else{st.innerHTML='<span style="color:var(--r)">&#10007; Could not load signals — check your /api/ai endpoint is running</span>';}}
+function renderSignals(d){var tk=d.ticker||'—';var ov=gel('sent-ov');ov.innerHTML='';var ovCard=document.createElement('div');ovCard.className='card';var sc=d.score||0,dir=(d.direction||'').toUpperCase();var dirPill='pg';if(sc<60)dirPill='pgo';if(sc<40)dirPill='pr';ovCard.innerHTML='<h4>Live Sentiment — '+tk+'</h4>';var inner=document.createElement('div');inner.style.cssText='display:flex;gap:10px';inner.innerHTML='<div style="flex:1;background:var(--gd);border-radius:var(--rs);padding:14px;text-align:center"><div style="font-size:26px;font-weight:800;color:var(--g)">'+sc+'</div><div style="font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-top:2px">Score</div><div class="pill '+dirPill+'" style="margin-top:6px">'+dir+'</div></div>'+'<div style="flex:2;display:flex;flex-direction:column;gap:7px;justify-content:center">'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.bull||0)+'%;height:100%;background:var(--g);border-radius:3px"></div></div><span class="up" style="font-size:11px;font-weight:600;min-width:30px">'+(d.bull||0)+'%</span><span style="font-size:10px;color:var(--t3)">Bull</span></div>'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.neut||0)+'%;height:100%;background:var(--go);border-radius:3px"></div></div><span style="font-size:11px;font-weight:600;color:var(--go);min-width:30px">'+(d.neut||0)+'%</span><span style="font-size:10px;color:var(--t3)">Neut</span></div>'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.bear||0)+'%;height:100%;background:var(--r);border-radius:3px"></div></div><span class="dn" style="font-size:11px;font-weight:600;min-width:30px">'+(d.bear||0)+'%</span><span style="font-size:10px;color:var(--t3)">Bear</span></div>'+'</div>';ovCard.appendChild(inner);var m2=document.createElement('div');m2.className='m2';m2.style.marginTop='11px';m2.innerHTML='<div class="mb"><div class="ml">News</div><div class="mv '+(sc>=60?'up':'dn')+'">'+(d.direction||'—')+'</div><div class="ms">'+(d.headlines?d.headlines.length:0)+' headlines</div></div>'+'<div class="mb"><div class="ml">X/Twitter</div><div class="mv '+(sc>=60?'up':'')+'">'+( d.xPosts&&d.xPosts.length?'Active':'—')+'</div><div class="ms">Pro traders</div></div>'+'<div class="mb"><div class="ml">Avg PT</div><div class="mv">$'+(d.analystPT||'—')+'</div><div class="ms '+((d.ptUpside||0)>=0?'up':'dn')+'">'+(( d.ptUpside||0)>=0?'+':'')+(d.ptUpside||0)+'%</div></div>'+'<div class="mb"><div class="ml">Earnings</div><div class="mv" style="color:var(--go)">'+(d.earningsDays?d.earningsDays+'d':'—')+'</div><div class="ms">'+((d.earningsDays||99)<21?'IV elevated':'Normal')+'</div></div>';ovCard.appendChild(m2);ov.appendChild(ovCard);var nw=gel('sent-news');nw.innerHTML='';var nCard=document.createElement('div');nCard.className='card';nCard.innerHTML='<h4>Headlines — '+tk+'</h4>';(d.headlines||[]).forEach(function(h){var dc=h.sentiment==='bullish'?'var(--g)':h.sentiment==='bearish'?'var(--r)':'var(--go)';var pc=h.sentiment==='bullish'?'pg':h.sentiment==='bearish'?'pr':'pgo';var item=document.createElement('div');item.className='ni';item.innerHTML='<div class="nd" style="background:'+dc+'"></div><div><div style="font-size:13px;line-height:1.5;color:var(--t2)">'+h.text+'</div><div style="font-size:10px;color:var(--t3);margin-top:3px">'+h.source+' '+h.time+'</div><span class="pill '+pc+'" style="margin-top:4px">'+(h.sentiment||'').toUpperCase()+'</span></div>';nCard.appendChild(item);});nw.appendChild(nCard);var xw=gel('sent-x');xw.innerHTML='';var xHdr=document.createElement('div');xHdr.style.cssText='background:var(--bg3);border:1px solid var(--bd);border-radius:var(--rs);padding:10px 13px;margin-bottom:13px;font-size:11px;color:var(--t3)';xHdr.textContent='Verified institutional investors and professional traders only';xw.appendChild(xHdr);(d.xPosts||[]).forEach(function(x){var sc2=x.sentiment==='bullish'?'pg':x.sentiment==='bearish'?'pr':'pgo';var xp=document.createElement('div');xp.className='xp';xp.innerHTML='<div style="display:flex;align-items:center;gap:9px;margin-bottom:10px"><div class="xa" style="background:'+x.color+'22;color:'+x.color+'">'+x.initials+'</div><div style="flex:1"><div style="display:flex;align-items:center"><span style="font-size:13px;font-weight:700">'+x.name+'</span><div class="xv">&#10003;</div></div><div style="font-size:11px;color:var(--t3)">'+x.handle+' — '+x.role+'</div></div><span class="pill '+sc2+'" style="font-size:9px">'+(x.sentiment||'').toUpperCase()+'</span></div><div style="font-size:13px;line-height:1.6;color:var(--t2);margin-bottom:9px">'+x.body+'</div><div style="display:flex;gap:13px"><span style="font-size:11px;color:var(--t3)">'+x.likes+' likes</span><span style="font-size:11px;color:var(--t3)">'+x.rt+' retweets</span></div>';xw.appendChild(xp);});var xFoot=document.createElement('div');xFoot.style.cssText='text-align:center;font-size:10px;color:var(--t3);padding:4px 0 8px';xFoot.textContent='For market context only. Not affiliated with these individuals.';xw.appendChild(xFoot);var aw=gel('sent-ana');aw.innerHTML='';var aCard=document.createElement('div');aCard.className='card';aCard.innerHTML='<h4>Analyst Ratings — '+tk+'</h4>';(d.analysts||[]).forEach(function(a){var up2=a.upside>=0;var rc=(a.rating==='Buy'||a.rating==='Overweight')?'var(--g)':(a.rating==='Sell'||a.rating==='Underweight')?'var(--r)':'var(--go)';var sh=a.firm.indexOf('Goldman')>=0?'GS':a.firm.indexOf('Morgan Stanley')>=0?'MS':a.firm.indexOf('JP')>=0?'JPM':a.firm.indexOf('Bank')>=0?'BAC':a.firm.indexOf('Citi')>=0?'CITI':'UBS';var row=document.createElement('div');row.className='br';row.innerHTML='<div style="display:flex;align-items:center;gap:9px"><div class="bl" style="background:var(--bd3);color:var(--b)">'+sh+'</div><div><div style="font-size:13px;font-weight:700">'+a.firm+'</div><div style="font-size:11px;color:'+rc+'">'+a.action+' — '+a.rating+'</div></div></div><div style="text-align:right"><div style="font-size:17px;font-weight:800;color:'+(up2?'var(--g)':'var(--r)')+'">$'+a.pt+'</div><div style="font-size:11px;color:'+(up2?'var(--g)':'var(--r)')+'">'+(up2?'+':'')+(a.upside||0).toFixed(1)+'%</div></div>';aCard.appendChild(row);});aw.appendChild(aCard);}
+
+/* ── MEDIA ── */
+function openURL(url){window.open(url,'_blank');}
+[['bb-open','https://www.bloomberg.com/live-tv'],['bb-btn','https://www.bloomberg.com/live-tv'],['cnbc-open','https://www.cnbc.com/live-tv/'],['cnbc-btn','https://www.cnbc.com/live-tv/'],['yf-open','https://finance.yahoo.com/live/'],['yf-btn','https://finance.yahoo.com/live/'],['mw-btn','https://www.marketwatch.com'],['sa-btn','https://seekingalpha.com'],['uw-btn','https://unusualwhales.com'],['bz-btn','https://www.benzinga.com'],['fv-btn','https://finviz.com'],['ba-btn','https://www.barrons.com'],['tv-btn','https://www.tradingview.com'],['os-btn','https://optionstrat.com'],['cb-btn','https://www.cboe.com'],['fred-btn','https://fred.stlouisfed.org'],['sec-btn','https://www.sec.gov/cgi-bin/browse-edgar'],['yo-btn','https://finance.yahoo.com/options']].forEach(function(pair){var e=gel(pair[0]);if(e)e.addEventListener('click',(function(url){return function(){openURL(url);};})(pair[1]));});
+['mt-live','mt-charts','mt-news','mt-tools'].forEach(function(id){gel(id).addEventListener('click',function(){document.querySelectorAll('#screen-media .tab').forEach(function(b){b.classList.remove('active');});this.classList.add('active');var map={'mt-live':'m-live','mt-charts':'m-charts','mt-news':'m-news','mt-tools':'m-tools'};Object.keys(map).forEach(function(k){var e=gel(map[k]);if(e)e.style.display=k===id?'block':'none';});});});
+
+/* ── JOURNAL ── */
+gel('open-at-btn').addEventListener('click',openAT);gel('log-first-btn').addEventListener('click',openAT);gel('jt-save-btn').addEventListener('click',saveJTrade);gel('jt-cancel-btn').addEventListener('click',function(){gel('atm').classList.add('hidden');});gel('jt-opt-btn').addEventListener('click',function(){setJtType('option',this);});gel('jt-stk-btn').addEventListener('click',function(){setJtType('stock',this);});gel('ai-recs-btn').addEventListener('click',getAIRecs);gel('clear-j-btn').addEventListener('click',function(){if(confirm('Clear all journal trades?')){journal=[];sv('sfx_journal',[]);renderJournal();}});gel('jt-tk').addEventListener('input',function(){this.value=this.value.toUpperCase();});
+function openAT(){gel('atm').classList.remove('hidden');gel('jt-date').value=new Date().toISOString().split('T')[0];}
+function setJtType(tp,btn){jtType=tp;document.querySelectorAll('#jt-seg .sb').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');gel('jt-of').style.display=tp==='option'?'block':'none';gel('jt-sf').style.display=tp==='stock'?'block':'none';}
+function saveJTrade(){var tk=(gel('jt-tk').value||'').trim().toUpperCase();if(!tk)return;var dir=gel('jt-dir').value,date=gel('jt-date').value,en,ex,qty,pnl,ret,be;if(jtType==='option'){en=parseFloat(gel('jt-en').value)||0;ex=parseFloat(gel('jt-ex').value)||0;qty=parseInt(gel('jt-qty').value)||1;var str=parseFloat(gel('jt-str').value)||0;pnl=(ex-en)*100*qty;ret=en>0?(ex-en)/en*100:0;be=dir==='Call'?str+en:str-en;}else{en=parseFloat(gel('jts-en').value)||0;ex=parseFloat(gel('jts-ex').value)||0;qty=parseInt(gel('jts-qty').value)||0;pnl=(ex-en)*qty;ret=en>0?(ex-en)/en*100:0;be=en;}journal.push({id:Date.now(),date:date,ticker:tk,direction:dir,assetClass:jtType,entry:en,exit:ex,qty:qty,pnl:parseFloat(pnl.toFixed(2)),retPct:parseFloat(ret.toFixed(2)),breakeven:parseFloat(be.toFixed(2)),notes:gel('jt-notes').value.trim(),status:ex>0?'closed':'open'});sv('sfx_journal',journal);renderJournal();gel('atm').classList.add('hidden');['jt-tk','jt-en','jt-ex','jt-str','jts-en','jts-ex','jts-qty','jt-notes'].forEach(function(id){var e=gel(id);if(e)e.value='';});gel('jt-qty').value='1';}
+function renderJournal(){var has=journal.length>0;gel('j-empty').style.display=has?'none':'block';gel('j-stats').style.display=has?'grid':'none';gel('jchart').style.display=has?'block':'none';gel('jai-wrap').style.display=has?'block':'none';gel('j-tt').style.display=has?'block':'none';gel('j-trades').innerHTML='';if(!has)return;var closed=journal.filter(function(t){return t.status==='closed';});var wr=closed.length?Math.round(closed.filter(function(t){return t.pnl>0;}).length/closed.length*100):0;var tot=journal.reduce(function(s,t){return s+t.pnl;},0);var jwrE=gel('jwr');if(jwrE){jwrE.textContent=wr+'%';jwrE.className=wr>=50?'up':'dn';}var jpE=gel('jpnl');if(jpE){jpE.textContent=(tot>=0?'+$':'-$')+Math.abs(tot).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});jpE.className=tot>=0?'up':'dn';}setText('jcnt',journal.length);drawChart(journal,tot);var frag=document.createDocumentFragment();journal.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);}).forEach(function(t){var up2=t.pnl>=0,pc=t.assetClass==='option'?(t.direction==='Call'?'pb':'pr'):(t.direction==='Long'?'pg':'pr');var el=document.createElement('div');el.className='ti';el.innerHTML='<div style="display:flex;justify-content:space-between;margin-bottom:10px"><div><div style="font-size:16px;font-weight:800">'+t.ticker+' <span class="pill '+pc+'">'+t.direction+'</span></div><div style="font-size:10px;color:var(--t3);margin-top:2px">'+(t.assetClass==='option'?'BE $'+t.breakeven+' — ':'')+t.date+'</div></div><div style="text-align:right"><div class="'+(up2?'up':'dn')+'" style="font-size:18px;font-weight:800">'+(up2?'+$':'-$')+Math.abs(t.pnl).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</div><div style="font-size:10px;color:var(--t3);margin-top:2px">'+t.status+'</div></div></div><div class="tst"><div class="tsi">Entry<span>$'+t.entry+'</span></div><div class="tsi">Exit<span>'+(t.exit?'$'+t.exit:'Open')+'</span></div><div class="tsi">Qty<span>'+t.qty+'</span></div><div class="tsi">Return<span class="'+(up2?'up':'dn')+'">'+(up2?'+':'')+t.retPct.toFixed(1)+'%</span></div></div>'+(t.notes?'<div style="font-size:11px;color:var(--t3);margin-top:8px;padding-top:8px;border-top:1px solid var(--bd)">'+t.notes+'</div>':'');frag.appendChild(el);});gel('j-trades').appendChild(frag);}
+function drawChart(trades,tot){var svg=gel('jsvg');if(!svg)return;var jcv=gel('jcv');if(jcv){jcv.textContent=(tot>=0?'+$':'-$')+Math.abs(tot).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});jcv.className=tot>=0?'up':'dn';}var sorted=trades.slice().sort(function(a,b){return new Date(a.date)-new Date(b.date);}),cum=0;var pts=[0].concat(sorted.map(function(t){cum+=t.pnl;return cum;}));var mn=Math.min.apply(null,pts),mx=Math.max.apply(null,pts),rng=mx-mn||1;var px=function(i){return i/(pts.length-1||1)*360+20;},py=function(v){return 170-20-(v-mn)/rng*130;};var poly=pts.map(function(v,i){return px(i)+','+py(v);}).join(' '),col=tot>=0?'#00c853':'#ff3d57';svg.innerHTML='<defs><linearGradient id="cg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="'+col+'" stop-opacity=".28"/><stop offset="100%" stop-color="'+col+'" stop-opacity="0"/></linearGradient></defs><polyline points="'+poly+'" stroke="'+col+'" stroke-width="2" fill="none"/><polygon points="'+poly+' '+px(pts.length-1)+',170 '+px(0)+',170" fill="url(#cg)"/>';}
+async function getAIRecs(){if(journal.length<2){alert('Log at least 2 trades to get AI coaching.');return;}var btn=gel('ai-recs-btn');if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span>Analyzing...';}var closed=journal.filter(function(t){return t.status==='closed';});var wr=closed.length?Math.round(closed.filter(function(t){return t.pnl>0;}).length/closed.length*100):0;var summary={trades:journal.length,winRate:wr,totalPnl:journal.reduce(function(s,t){return s+t.pnl;},0),recentTrades:closed.slice(-10).map(function(t){return{ticker:t.ticker,direction:t.direction,pnl:t.pnl,ret:t.retPct};})};var prompt='You are a professional trading coach. Analyze this journal and give specific actionable coaching. Account: $'+(user.accountSize||'unknown')+', Risk: '+(user.riskPct||2)+'% per trade. Journal: '+JSON.stringify(summary)+'. Return ONLY this JSON with no markdown: {"summary":"1-sentence assessment","recommendations":[{"title":"action title","detail":"specific advice","priority":"high"},{"title":"title","detail":"advice","priority":"medium"},{"title":"title","detail":"advice","priority":"low"}]}';var raw=await callAI(prompt,false,1000);var d=parseJSON(raw);var pC={high:'var(--r)',medium:'var(--go)',low:'var(--g)'};if(d){gel('jai').innerHTML='<p style="font-size:13px;color:var(--t2);margin-bottom:12px;line-height:1.5">'+(d.summary||'')+'</p>'+(d.recommendations||[]).map(function(r){return'<div class="ai-rec"><div class="art" style="color:'+(pC[r.priority]||'var(--b)')+'">'+r.title+' <span style="font-size:9px;opacity:.7;text-transform:uppercase;letter-spacing:.5px">'+r.priority+'</span></div><div class="ard">'+r.detail+'</div></div>';}).join('')+'<button class="abtn" style="background:var(--b);font-size:12px;padding:10px;margin-top:10px" id="ai-refresh-btn">Refresh Analysis</button>';var rb=gel('ai-refresh-btn');if(rb)rb.addEventListener('click',getAIRecs);}else{gel('jai').innerHTML='<p style="color:var(--r);font-size:13px">Could not generate analysis.</p><button class="abtn" style="background:var(--b);font-size:13px;padding:11px;margin-top:8px" id="ai-retry-btn">Retry</button>';var rt=gel('ai-retry-btn');if(rt)rt.addEventListener('click',getAIRecs);}}
+
+/* ── INIT ── */
+(function(){
+  var u=ld('sfx_user',null);if(u&&u.name)user=u;
+  applyUser();
+  var t=ld('sfx_theme','dark');applyTheme(t);highlightThBtn(t);
+  journal=ld('sfx_journal',[]);
+  watchlist=ld('sfx_watchlist',['AAPL','PLTR','NVDA','SPY']);
+  renderWatchlist(null);renderJournal();populateExpiries();loadPrices();
+  setInterval(loadPrices,90000);
+})();
+})();
+</script>
+</body>
+</html>
++(S?S.toFixed(2):'?')+'\n- OTM by: '+(S&&K?(tp==='call'?((K-S)/S*100).toFixed(1):((S-K)/S*100).toFixed(1)):'?')+'%\n- Days to expiry: '+dte+'\n- Premium paid: 
+
+  var prompt='You are a Goldman Sachs senior analyst. Search for current information about "'+tk+'" and generate a comprehensive pre-trade report. Current price: $'+(S?S.toFixed(2):'unknown')+'. '+tradeCtx+'. Return ONLY valid JSON, no markdown: {"company":"Full Company Name","price":'+(S||0)+',"change":'+(liveQ?liveQ.chg:0)+',"pct":'+(liveQ?liveQ.pct:0)+',"sentiment":{"score":72,"direction":"Bullish","bull":65,"neut":25,"bear":10},"bbConsensus":{"buy":4,"neutral":1,"sell":0,"avgPT":210,"upside":12.5},"thesis":"Write a 3-sentence Goldman Sachs style institutional trade thesis here. Be specific to the company and current market conditions.","catalysts":["specific catalyst 1","specific catalyst 2","specific catalyst 3"],"risks":["specific risk 1","specific risk 2"],"earningsDays":45,"macroFit":"Bullish macro regime — rate environment favorable for growth stocks","verdict":{"score":76,"label":"High Conviction","action":"EXECUTE","color":"green"}}';
+
+  var txt=await callAI(prompt,true,1800);
+  var aiData=parseJSON(txt);
+  setStep('step-sent',true);setStep('step-thesis',true);fill.style.width='85%';
+
+  // STEP 5 — build verdict
+  setStep('step-verdict',true);fill.style.width='100%';
+
+  // Remove loading card, render report
+  setTimeout(function(){
+    stepsCard.remove();
+    prog.remove();
+    renderReport(tk,S,liveQ,isOpt,premScore,sigma,G,dte,tp,K,prem,setupGrade,rr,aiData,body);
+  },400);
+}
+
+function renderReport(tk,S,liveQ,isOpt,premScore,sigma,G,dte,tp,K,prem,setupGrade,rr,ai,body){
+  body.innerHTML='';
+  var pct=liveQ?liveQ.pct:0,chg=liveQ?liveQ.chg:0;
+
+  // ── VERDICT CARD
+  var vs=ai&&ai.verdict?ai.verdict.score:premScore||65;
+  var vl=ai&&ai.verdict?ai.verdict.label:vs>=75?'High Conviction':vs>=55?'Moderate Setup':'Proceed with Caution';
+  var va=ai&&ai.verdict?ai.verdict.action:vs>=65?'EXECUTE':'REVIEW';
+  var vc=vs>=70?'#00c853':vs>=50?'#f5c842':'#ff3d57';
+  var circ=263.9,offset=(circ-circ*vs/100).toFixed(1);
+  var vCard=document.createElement('div');
+  vCard.className='verdict-card';
+  vCard.style.cssText='background:linear-gradient(135deg,'+vc+'18,'+vc+'08);border:1px solid '+vc+'40;';
+  vCard.innerHTML=
+    '<div style="font-size:11px;font-weight:700;color:'+vc+';text-transform:uppercase;letter-spacing:1px;margin-bottom:14px">Pre-Trade Report — '+tk+'</div>'+
+    '<div class="verdict-ring"><svg viewBox="0 0 100 100" width="110" height="110"><circle cx="50" cy="50" r="42" stroke="rgba(255,255,255,.08)" stroke-width="9" fill="none"/><circle cx="50" cy="50" r="42" stroke="'+vc+'" stroke-width="9" fill="none" stroke-dasharray="'+circ+'" stroke-dashoffset="'+offset+'" stroke-linecap="round"/></svg><div class="verdict-num" style="color:'+vc+'">'+vs+'</div></div>'+
+    '<div class="verdict-label" style="color:'+vc+'">'+vl.toUpperCase()+'</div>'+
+    '<div class="verdict-action" style="color:'+vc+'">'+va+'</div>'+
+    '<div style="font-size:12px;color:var(--t3);margin-top:10px">$'+(S?S.toFixed(2):'—')+' <span class="'+(pct>=0?'up':'dn')+'">'+(pct>=0?'▲ +':'▼ ')+Math.abs(pct).toFixed(2)+'%</span>'+(ai&&ai.company?' · '+ai.company:'')+'</div>';
+  body.appendChild(vCard);
+
+  // ── SCORE GRID
+  var sent=ai&&ai.sentiment?ai.sentiment:{score:65,direction:'Bullish',bull:60,neut:28,bear:12};
+  var scoreGrid=document.createElement('div');scoreGrid.className='m2';
+  scoreGrid.innerHTML=
+    '<div class="mb"><div class="ml">Sentiment</div><div class="mv" style="color:var(--b)">'+sent.score+'</div><div class="ms '+(sent.score>=60?'up':sent.score>=40?'':'dn')+'">'+sent.direction+'</div></div>'+
+    (isOpt&&premScore!==null?'<div class="mb"><div class="ml">Premium Score</div><div class="mv" style="color:'+(premScore>=65?'var(--g)':premScore>=45?'var(--go)':'var(--r)')+'">'+premScore+'</div><div class="ms">'+(premScore>=65?'Worth It':premScore>=45?'Borderline':'Overpriced')+'</div></div>':'')+
+    (!isOpt&&setupGrade?'<div class="mb"><div class="ml">Setup Grade</div><div class="mv" style="color:'+(setupGrade==='A'||setupGrade==='B+'?'var(--g)':setupGrade==='C'?'var(--go)':'var(--r)')+'">'+setupGrade+'</div><div class="ms">R:R '+(rr?rr.toFixed(2):'—')+'x</div></div>':'')+
+    (isOpt&&sigma?'<div class="mb"><div class="ml">Implied Vol</div><div class="mv" style="color:var(--b)">'+(sigma*100).toFixed(1)+'%</div><div class="ms">'+(sigma<.35?'Below avg':sigma<.55?'Above avg':'Elevated IV')+'</div></div>':'')+
+    '<div class="mb"><div class="ml">BB Consensus</div><div class="mv up">'+(ai&&ai.bbConsensus?ai.bbConsensus.buy+' Buy':'—')+'</div><div class="ms">'+(ai&&ai.bbConsensus?'Avg PT $'+ai.bbConsensus.avgPT:'—')+'</div></div>'+
+    '<div class="mb"><div class="ml">Earnings</div><div class="mv" style="color:var(--go)">'+(ai&&ai.earningsDays?ai.earningsDays+'d':'—')+'</div><div class="ms">'+(ai&&ai.earningsDays&&ai.earningsDays<21?'IV elevated':'Normal')+'</div></div>';
+  body.appendChild(scoreGrid);
+
+  // ── THESIS
+  if(ai&&ai.thesis){
+    var tBox=document.createElement('div');tBox.className='thesis-box';
+    tBox.innerHTML='<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><div style="font-size:18px">🏦</div><div style="font-size:13px;font-weight:700;color:var(--b)">AI Trade Thesis</div></div><p>'+ai.thesis+'</p>';
+    body.appendChild(tBox);
+  }
+
+  // ── CATALYSTS + RISKS
+  if(ai&&(ai.catalysts||ai.risks)){
+    var crCard=document.createElement('div');crCard.className='card';
+    var html='';
+    if(ai.catalysts&&ai.catalysts.length){
+      html+='<div style="font-size:11px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">✦ Catalysts</div>';
+      ai.catalysts.forEach(function(c){html+='<div class="flag-item"><div class="flag-dot" style="background:var(--g)"></div><span>'+c+'</span></div>';});
+    }
+    if(ai.risks&&ai.risks.length){
+      html+='<div style="font-size:11px;font-weight:700;color:var(--r);text-transform:uppercase;letter-spacing:.7px;margin:'+(ai.catalysts?'14px':'0')+'px 0 8px">⚠ Risk Flags</div>';
+      ai.risks.forEach(function(r){html+='<div class="flag-item"><div class="flag-dot" style="background:var(--r)"></div><span>'+r+'</span></div>';});
+    }
+    crCard.innerHTML=html;
+    body.appendChild(crCard);
+  }
+
+  // ── MACRO FIT
+  if(ai&&ai.macroFit){
+    var mBox=document.createElement('div');
+    mBox.className='wb';
+    mBox.innerHTML='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--go)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><p>'+ai.macroFit+'</p>';
+    body.appendChild(mBox);
+  }
+
+  // ── SENTIMENT BARS
+  var sentCard=document.createElement('div');sentCard.className='card';
+  sentCard.innerHTML='<h4>Market Sentiment Breakdown</h4>'+
+    '<div style="display:flex;flex-direction:column;gap:8px">'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Bull</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.bull+'%;height:100%;background:var(--g);border-radius:3px"></div></div><span class="up" style="font-size:11px;font-weight:600;width:28px;text-align:right">'+sent.bull+'%</span></div>'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Neut</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.neut+'%;height:100%;background:var(--go);border-radius:3px"></div></div><span style="font-size:11px;font-weight:600;color:var(--go);width:28px;text-align:right">'+sent.neut+'%</span></div>'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Bear</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.bear+'%;height:100%;background:var(--r);border-radius:3px"></div></div><span class="dn" style="font-size:11px;font-weight:600;width:28px;text-align:right">'+sent.bear+'%</span></div>'+
+    '</div>';
+  body.appendChild(sentCard);
+
+  // ── OPTIONS DETAIL (if applicable)
+  if(isOpt&&G&&sigma){
+    var optCard=document.createElement('div');optCard.className='card';
+    var be=(tp==='call'?K+prem:K-prem).toFixed(2);
+    optCard.innerHTML='<h4>Options Details</h4>'+
+      '<div class="gr"><span style="font-size:13px">Break-Even</span><span style="font-weight:700">$'+be+'</span></div>'+
+      '<div class="gr"><span style="font-size:13px">Delta</span><span style="font-weight:700">'+(G.delta>=0?'+':'')+G.delta.toFixed(3)+'</span></div>'+
+      '<div class="gr"><span style="font-size:13px">Theta / Day</span><span style="font-weight:700;color:var(--r)">-$'+(Math.abs(G.theta)*100*prem).toFixed(2)+'</span></div>'+
+      '<div class="gr" style="border:none"><span style="font-size:13px">Days to Expiry</span><span style="font-weight:700">'+dte+'d</span></div>';
+    body.appendChild(optCard);
+  }
+
+  // ── DISCLAIMER + ROBINHOOD BUTTON
+  var disc=document.createElement('div');
+  disc.style.cssText='font-size:10px;color:var(--t3);text-align:center;padding:12px 0 8px;line-height:1.6';
+  disc.textContent='For informational purposes only. Not financial advice. Always do your own research before trading.';
+  body.appendChild(disc);
+
+  var rbBtn=document.createElement('button');
+  rbBtn.className='rpt-btn';
+  rbBtn.style.cssText='background:linear-gradient(135deg,#00c853,#00a844);color:#000;margin-bottom:14px';
+  rbBtn.textContent='Open Robinhood →';
+  rbBtn.addEventListener('click',function(){window.open('https://robinhood.com','_blank');});
+  body.appendChild(rbBtn);
+}
+
+gel('rpt-back').addEventListener('click',function(){gel('rpt-overlay').classList.remove('open');});
+
+/* ── SIGNALS ── */
+gel('stk').addEventListener('input',function(){this.value=this.value.toUpperCase();});
+gel('signals-load-btn').addEventListener('click',loadSignals);
+gel('stk').addEventListener('keydown',function(e){if(e.key==='Enter')loadSignals();});
+['st-ov','st-news','st-x','st-ana'].forEach(function(id){gel(id).addEventListener('click',function(){document.querySelectorAll('#screen-sentiment .tab').forEach(function(b){b.classList.remove('active');});this.classList.add('active');var map={'st-ov':'sent-ov','st-news':'sent-news','st-x':'sent-x','st-ana':'sent-ana'};Object.keys(map).forEach(function(k){var e=gel(map[k]);if(e)e.style.display=k===id?'block':'none';});});});
+async function loadSignals(){var raw=gel('stk').value.trim();if(!raw)return;var st=gel('sst');st.innerHTML='<span class="spin"></span>Loading signals for '+raw+'...';var prompt='Search for current real-time information about the stock ticker or company "'+raw+'". Return ONLY valid JSON (no markdown, no code blocks): {"ticker":"AAPL","company":"Apple Inc.","price":189.30,"change":2.6,"pct":1.4,"score":72,"direction":"Bullish","bull":68,"neut":22,"bear":10,"earningsDays":45,"analystPT":210,"ptUpside":10.9,"headlines":[{"text":"headline text","source":"Reuters","time":"2h ago","sentiment":"bullish"},{"text":"headline","source":"Bloomberg","time":"4h ago","sentiment":"neutral"},{"text":"headline","source":"FT","time":"6h ago","sentiment":"bearish"},{"text":"headline","source":"WSJ","time":"8h ago","sentiment":"bullish"}],"analysts":[{"firm":"Goldman Sachs","rating":"Buy","action":"Upgrade","pt":220,"upside":16.2},{"firm":"Morgan Stanley","rating":"Overweight","action":"Maintain","pt":210,"upside":10.9},{"firm":"JP Morgan","rating":"Neutral","action":"Maintain","pt":185,"upside":-2.3},{"firm":"Bank of America","rating":"Buy","action":"Maintain","pt":225,"upside":18.9},{"firm":"Citigroup","rating":"Neutral","action":"Maintain","pt":180,"upside":-4.9},{"firm":"UBS","rating":"Buy","action":"Upgrade","pt":215,"upside":13.5}],"xPosts":[{"name":"The Kobeissi Letter","handle":"@KobeissiLetter","role":"Institutional Macro","initials":"KL","color":"#38c8ff","body":"relevant commentary about this specific stock","sentiment":"bullish","likes":"8.4K","rt":"2.1K"},{"name":"Bill Ackman","handle":"@BillAckman","role":"Hedge Fund Pershing Square","initials":"BA","color":"#00c853","body":"relevant commentary","sentiment":"bullish","likes":"14K","rt":"3.8K"},{"name":"Chamath Palihapitiya","handle":"@chamath","role":"VC Social Capital","initials":"CP","color":"#b44dff","body":"relevant commentary","sentiment":"neutral","likes":"22K","rt":"5.2K"},{"name":"Raoul Pal","handle":"@RaoulGMI","role":"Macro Investor GMI","initials":"RP","color":"#f5c842","body":"relevant commentary","sentiment":"bullish","likes":"9.7K","rt":"2.9K"}]}';var txt=await callAI(prompt,true,2500);var d=parseJSON(txt);if(d){st.innerHTML='<span style="color:var(--g)">&#10003; Live signals loaded for '+(d.ticker||raw.toUpperCase())+(d.company?' — '+d.company:'')+'</span>';renderSignals(d);}else{st.innerHTML='<span style="color:var(--r)">&#10007; Could not load signals — check your /api/ai endpoint is running</span>';}}
+function renderSignals(d){var tk=d.ticker||'—';var ov=gel('sent-ov');ov.innerHTML='';var ovCard=document.createElement('div');ovCard.className='card';var sc=d.score||0,dir=(d.direction||'').toUpperCase();var dirPill='pg';if(sc<60)dirPill='pgo';if(sc<40)dirPill='pr';ovCard.innerHTML='<h4>Live Sentiment — '+tk+'</h4>';var inner=document.createElement('div');inner.style.cssText='display:flex;gap:10px';inner.innerHTML='<div style="flex:1;background:var(--gd);border-radius:var(--rs);padding:14px;text-align:center"><div style="font-size:26px;font-weight:800;color:var(--g)">'+sc+'</div><div style="font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-top:2px">Score</div><div class="pill '+dirPill+'" style="margin-top:6px">'+dir+'</div></div>'+'<div style="flex:2;display:flex;flex-direction:column;gap:7px;justify-content:center">'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.bull||0)+'%;height:100%;background:var(--g);border-radius:3px"></div></div><span class="up" style="font-size:11px;font-weight:600;min-width:30px">'+(d.bull||0)+'%</span><span style="font-size:10px;color:var(--t3)">Bull</span></div>'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.neut||0)+'%;height:100%;background:var(--go);border-radius:3px"></div></div><span style="font-size:11px;font-weight:600;color:var(--go);min-width:30px">'+(d.neut||0)+'%</span><span style="font-size:10px;color:var(--t3)">Neut</span></div>'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.bear||0)+'%;height:100%;background:var(--r);border-radius:3px"></div></div><span class="dn" style="font-size:11px;font-weight:600;min-width:30px">'+(d.bear||0)+'%</span><span style="font-size:10px;color:var(--t3)">Bear</span></div>'+'</div>';ovCard.appendChild(inner);var m2=document.createElement('div');m2.className='m2';m2.style.marginTop='11px';m2.innerHTML='<div class="mb"><div class="ml">News</div><div class="mv '+(sc>=60?'up':'dn')+'">'+(d.direction||'—')+'</div><div class="ms">'+(d.headlines?d.headlines.length:0)+' headlines</div></div>'+'<div class="mb"><div class="ml">X/Twitter</div><div class="mv '+(sc>=60?'up':'')+'">'+( d.xPosts&&d.xPosts.length?'Active':'—')+'</div><div class="ms">Pro traders</div></div>'+'<div class="mb"><div class="ml">Avg PT</div><div class="mv">$'+(d.analystPT||'—')+'</div><div class="ms '+((d.ptUpside||0)>=0?'up':'dn')+'">'+(( d.ptUpside||0)>=0?'+':'')+(d.ptUpside||0)+'%</div></div>'+'<div class="mb"><div class="ml">Earnings</div><div class="mv" style="color:var(--go)">'+(d.earningsDays?d.earningsDays+'d':'—')+'</div><div class="ms">'+((d.earningsDays||99)<21?'IV elevated':'Normal')+'</div></div>';ovCard.appendChild(m2);ov.appendChild(ovCard);var nw=gel('sent-news');nw.innerHTML='';var nCard=document.createElement('div');nCard.className='card';nCard.innerHTML='<h4>Headlines — '+tk+'</h4>';(d.headlines||[]).forEach(function(h){var dc=h.sentiment==='bullish'?'var(--g)':h.sentiment==='bearish'?'var(--r)':'var(--go)';var pc=h.sentiment==='bullish'?'pg':h.sentiment==='bearish'?'pr':'pgo';var item=document.createElement('div');item.className='ni';item.innerHTML='<div class="nd" style="background:'+dc+'"></div><div><div style="font-size:13px;line-height:1.5;color:var(--t2)">'+h.text+'</div><div style="font-size:10px;color:var(--t3);margin-top:3px">'+h.source+' '+h.time+'</div><span class="pill '+pc+'" style="margin-top:4px">'+(h.sentiment||'').toUpperCase()+'</span></div>';nCard.appendChild(item);});nw.appendChild(nCard);var xw=gel('sent-x');xw.innerHTML='';var xHdr=document.createElement('div');xHdr.style.cssText='background:var(--bg3);border:1px solid var(--bd);border-radius:var(--rs);padding:10px 13px;margin-bottom:13px;font-size:11px;color:var(--t3)';xHdr.textContent='Verified institutional investors and professional traders only';xw.appendChild(xHdr);(d.xPosts||[]).forEach(function(x){var sc2=x.sentiment==='bullish'?'pg':x.sentiment==='bearish'?'pr':'pgo';var xp=document.createElement('div');xp.className='xp';xp.innerHTML='<div style="display:flex;align-items:center;gap:9px;margin-bottom:10px"><div class="xa" style="background:'+x.color+'22;color:'+x.color+'">'+x.initials+'</div><div style="flex:1"><div style="display:flex;align-items:center"><span style="font-size:13px;font-weight:700">'+x.name+'</span><div class="xv">&#10003;</div></div><div style="font-size:11px;color:var(--t3)">'+x.handle+' — '+x.role+'</div></div><span class="pill '+sc2+'" style="font-size:9px">'+(x.sentiment||'').toUpperCase()+'</span></div><div style="font-size:13px;line-height:1.6;color:var(--t2);margin-bottom:9px">'+x.body+'</div><div style="display:flex;gap:13px"><span style="font-size:11px;color:var(--t3)">'+x.likes+' likes</span><span style="font-size:11px;color:var(--t3)">'+x.rt+' retweets</span></div>';xw.appendChild(xp);});var xFoot=document.createElement('div');xFoot.style.cssText='text-align:center;font-size:10px;color:var(--t3);padding:4px 0 8px';xFoot.textContent='For market context only. Not affiliated with these individuals.';xw.appendChild(xFoot);var aw=gel('sent-ana');aw.innerHTML='';var aCard=document.createElement('div');aCard.className='card';aCard.innerHTML='<h4>Analyst Ratings — '+tk+'</h4>';(d.analysts||[]).forEach(function(a){var up2=a.upside>=0;var rc=(a.rating==='Buy'||a.rating==='Overweight')?'var(--g)':(a.rating==='Sell'||a.rating==='Underweight')?'var(--r)':'var(--go)';var sh=a.firm.indexOf('Goldman')>=0?'GS':a.firm.indexOf('Morgan Stanley')>=0?'MS':a.firm.indexOf('JP')>=0?'JPM':a.firm.indexOf('Bank')>=0?'BAC':a.firm.indexOf('Citi')>=0?'CITI':'UBS';var row=document.createElement('div');row.className='br';row.innerHTML='<div style="display:flex;align-items:center;gap:9px"><div class="bl" style="background:var(--bd3);color:var(--b)">'+sh+'</div><div><div style="font-size:13px;font-weight:700">'+a.firm+'</div><div style="font-size:11px;color:'+rc+'">'+a.action+' — '+a.rating+'</div></div></div><div style="text-align:right"><div style="font-size:17px;font-weight:800;color:'+(up2?'var(--g)':'var(--r)')+'">$'+a.pt+'</div><div style="font-size:11px;color:'+(up2?'var(--g)':'var(--r)')+'">'+(up2?'+':'')+(a.upside||0).toFixed(1)+'%</div></div>';aCard.appendChild(row);});aw.appendChild(aCard);}
+
+/* ── MEDIA ── */
+function openURL(url){window.open(url,'_blank');}
+[['bb-open','https://www.bloomberg.com/live-tv'],['bb-btn','https://www.bloomberg.com/live-tv'],['cnbc-open','https://www.cnbc.com/live-tv/'],['cnbc-btn','https://www.cnbc.com/live-tv/'],['yf-open','https://finance.yahoo.com/live/'],['yf-btn','https://finance.yahoo.com/live/'],['mw-btn','https://www.marketwatch.com'],['sa-btn','https://seekingalpha.com'],['uw-btn','https://unusualwhales.com'],['bz-btn','https://www.benzinga.com'],['fv-btn','https://finviz.com'],['ba-btn','https://www.barrons.com'],['tv-btn','https://www.tradingview.com'],['os-btn','https://optionstrat.com'],['cb-btn','https://www.cboe.com'],['fred-btn','https://fred.stlouisfed.org'],['sec-btn','https://www.sec.gov/cgi-bin/browse-edgar'],['yo-btn','https://finance.yahoo.com/options']].forEach(function(pair){var e=gel(pair[0]);if(e)e.addEventListener('click',(function(url){return function(){openURL(url);};})(pair[1]));});
+['mt-live','mt-charts','mt-news','mt-tools'].forEach(function(id){gel(id).addEventListener('click',function(){document.querySelectorAll('#screen-media .tab').forEach(function(b){b.classList.remove('active');});this.classList.add('active');var map={'mt-live':'m-live','mt-charts':'m-charts','mt-news':'m-news','mt-tools':'m-tools'};Object.keys(map).forEach(function(k){var e=gel(map[k]);if(e)e.style.display=k===id?'block':'none';});});});
+
+/* ── JOURNAL ── */
+gel('open-at-btn').addEventListener('click',openAT);gel('log-first-btn').addEventListener('click',openAT);gel('jt-save-btn').addEventListener('click',saveJTrade);gel('jt-cancel-btn').addEventListener('click',function(){gel('atm').classList.add('hidden');});gel('jt-opt-btn').addEventListener('click',function(){setJtType('option',this);});gel('jt-stk-btn').addEventListener('click',function(){setJtType('stock',this);});gel('ai-recs-btn').addEventListener('click',getAIRecs);gel('clear-j-btn').addEventListener('click',function(){if(confirm('Clear all journal trades?')){journal=[];sv('sfx_journal',[]);renderJournal();}});gel('jt-tk').addEventListener('input',function(){this.value=this.value.toUpperCase();});
+function openAT(){gel('atm').classList.remove('hidden');gel('jt-date').value=new Date().toISOString().split('T')[0];}
+function setJtType(tp,btn){jtType=tp;document.querySelectorAll('#jt-seg .sb').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');gel('jt-of').style.display=tp==='option'?'block':'none';gel('jt-sf').style.display=tp==='stock'?'block':'none';}
+function saveJTrade(){var tk=(gel('jt-tk').value||'').trim().toUpperCase();if(!tk)return;var dir=gel('jt-dir').value,date=gel('jt-date').value,en,ex,qty,pnl,ret,be;if(jtType==='option'){en=parseFloat(gel('jt-en').value)||0;ex=parseFloat(gel('jt-ex').value)||0;qty=parseInt(gel('jt-qty').value)||1;var str=parseFloat(gel('jt-str').value)||0;pnl=(ex-en)*100*qty;ret=en>0?(ex-en)/en*100:0;be=dir==='Call'?str+en:str-en;}else{en=parseFloat(gel('jts-en').value)||0;ex=parseFloat(gel('jts-ex').value)||0;qty=parseInt(gel('jts-qty').value)||0;pnl=(ex-en)*qty;ret=en>0?(ex-en)/en*100:0;be=en;}journal.push({id:Date.now(),date:date,ticker:tk,direction:dir,assetClass:jtType,entry:en,exit:ex,qty:qty,pnl:parseFloat(pnl.toFixed(2)),retPct:parseFloat(ret.toFixed(2)),breakeven:parseFloat(be.toFixed(2)),notes:gel('jt-notes').value.trim(),status:ex>0?'closed':'open'});sv('sfx_journal',journal);renderJournal();gel('atm').classList.add('hidden');['jt-tk','jt-en','jt-ex','jt-str','jts-en','jts-ex','jts-qty','jt-notes'].forEach(function(id){var e=gel(id);if(e)e.value='';});gel('jt-qty').value='1';}
+function renderJournal(){var has=journal.length>0;gel('j-empty').style.display=has?'none':'block';gel('j-stats').style.display=has?'grid':'none';gel('jchart').style.display=has?'block':'none';gel('jai-wrap').style.display=has?'block':'none';gel('j-tt').style.display=has?'block':'none';gel('j-trades').innerHTML='';if(!has)return;var closed=journal.filter(function(t){return t.status==='closed';});var wr=closed.length?Math.round(closed.filter(function(t){return t.pnl>0;}).length/closed.length*100):0;var tot=journal.reduce(function(s,t){return s+t.pnl;},0);var jwrE=gel('jwr');if(jwrE){jwrE.textContent=wr+'%';jwrE.className=wr>=50?'up':'dn';}var jpE=gel('jpnl');if(jpE){jpE.textContent=(tot>=0?'+$':'-$')+Math.abs(tot).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});jpE.className=tot>=0?'up':'dn';}setText('jcnt',journal.length);drawChart(journal,tot);var frag=document.createDocumentFragment();journal.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);}).forEach(function(t){var up2=t.pnl>=0,pc=t.assetClass==='option'?(t.direction==='Call'?'pb':'pr'):(t.direction==='Long'?'pg':'pr');var el=document.createElement('div');el.className='ti';el.innerHTML='<div style="display:flex;justify-content:space-between;margin-bottom:10px"><div><div style="font-size:16px;font-weight:800">'+t.ticker+' <span class="pill '+pc+'">'+t.direction+'</span></div><div style="font-size:10px;color:var(--t3);margin-top:2px">'+(t.assetClass==='option'?'BE $'+t.breakeven+' — ':'')+t.date+'</div></div><div style="text-align:right"><div class="'+(up2?'up':'dn')+'" style="font-size:18px;font-weight:800">'+(up2?'+$':'-$')+Math.abs(t.pnl).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</div><div style="font-size:10px;color:var(--t3);margin-top:2px">'+t.status+'</div></div></div><div class="tst"><div class="tsi">Entry<span>$'+t.entry+'</span></div><div class="tsi">Exit<span>'+(t.exit?'$'+t.exit:'Open')+'</span></div><div class="tsi">Qty<span>'+t.qty+'</span></div><div class="tsi">Return<span class="'+(up2?'up':'dn')+'">'+(up2?'+':'')+t.retPct.toFixed(1)+'%</span></div></div>'+(t.notes?'<div style="font-size:11px;color:var(--t3);margin-top:8px;padding-top:8px;border-top:1px solid var(--bd)">'+t.notes+'</div>':'');frag.appendChild(el);});gel('j-trades').appendChild(frag);}
+function drawChart(trades,tot){var svg=gel('jsvg');if(!svg)return;var jcv=gel('jcv');if(jcv){jcv.textContent=(tot>=0?'+$':'-$')+Math.abs(tot).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});jcv.className=tot>=0?'up':'dn';}var sorted=trades.slice().sort(function(a,b){return new Date(a.date)-new Date(b.date);}),cum=0;var pts=[0].concat(sorted.map(function(t){cum+=t.pnl;return cum;}));var mn=Math.min.apply(null,pts),mx=Math.max.apply(null,pts),rng=mx-mn||1;var px=function(i){return i/(pts.length-1||1)*360+20;},py=function(v){return 170-20-(v-mn)/rng*130;};var poly=pts.map(function(v,i){return px(i)+','+py(v);}).join(' '),col=tot>=0?'#00c853':'#ff3d57';svg.innerHTML='<defs><linearGradient id="cg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="'+col+'" stop-opacity=".28"/><stop offset="100%" stop-color="'+col+'" stop-opacity="0"/></linearGradient></defs><polyline points="'+poly+'" stroke="'+col+'" stroke-width="2" fill="none"/><polygon points="'+poly+' '+px(pts.length-1)+',170 '+px(0)+',170" fill="url(#cg)"/>';}
+async function getAIRecs(){if(journal.length<2){alert('Log at least 2 trades to get AI coaching.');return;}var btn=gel('ai-recs-btn');if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span>Analyzing...';}var closed=journal.filter(function(t){return t.status==='closed';});var wr=closed.length?Math.round(closed.filter(function(t){return t.pnl>0;}).length/closed.length*100):0;var summary={trades:journal.length,winRate:wr,totalPnl:journal.reduce(function(s,t){return s+t.pnl;},0),recentTrades:closed.slice(-10).map(function(t){return{ticker:t.ticker,direction:t.direction,pnl:t.pnl,ret:t.retPct};})};var prompt='You are a professional trading coach. Analyze this journal and give specific actionable coaching. Account: $'+(user.accountSize||'unknown')+', Risk: '+(user.riskPct||2)+'% per trade. Journal: '+JSON.stringify(summary)+'. Return ONLY this JSON with no markdown: {"summary":"1-sentence assessment","recommendations":[{"title":"action title","detail":"specific advice","priority":"high"},{"title":"title","detail":"advice","priority":"medium"},{"title":"title","detail":"advice","priority":"low"}]}';var raw=await callAI(prompt,false,1000);var d=parseJSON(raw);var pC={high:'var(--r)',medium:'var(--go)',low:'var(--g)'};if(d){gel('jai').innerHTML='<p style="font-size:13px;color:var(--t2);margin-bottom:12px;line-height:1.5">'+(d.summary||'')+'</p>'+(d.recommendations||[]).map(function(r){return'<div class="ai-rec"><div class="art" style="color:'+(pC[r.priority]||'var(--b)')+'">'+r.title+' <span style="font-size:9px;opacity:.7;text-transform:uppercase;letter-spacing:.5px">'+r.priority+'</span></div><div class="ard">'+r.detail+'</div></div>';}).join('')+'<button class="abtn" style="background:var(--b);font-size:12px;padding:10px;margin-top:10px" id="ai-refresh-btn">Refresh Analysis</button>';var rb=gel('ai-refresh-btn');if(rb)rb.addEventListener('click',getAIRecs);}else{gel('jai').innerHTML='<p style="color:var(--r);font-size:13px">Could not generate analysis.</p><button class="abtn" style="background:var(--b);font-size:13px;padding:11px;margin-top:8px" id="ai-retry-btn">Retry</button>';var rt=gel('ai-retry-btn');if(rt)rt.addEventListener('click',getAIRecs);}}
+
+/* ── INIT ── */
+(function(){
+  var u=ld('sfx_user',null);if(u&&u.name)user=u;
+  applyUser();
+  var t=ld('sfx_theme','dark');applyTheme(t);highlightThBtn(t);
+  journal=ld('sfx_journal',[]);
+  watchlist=ld('sfx_watchlist',['AAPL','PLTR','NVDA','SPY']);
+  renderWatchlist(null);renderJournal();populateExpiries();loadPrices();
+  setInterval(loadPrices,90000);
+})();
+})();
+</script>
+</body>
+</html>
++prem+' | IV: '+(sigma?(sigma*100).toFixed(1)+'%':'?')+'\n- Delta: '+(G?G.delta.toFixed(3):'?')+' | Prob profit: '+(G?Math.round(Math.abs(G.delta)*100)+'%':'?')+'\n- Local premium score: '+(premScore||'N/A')+'/100\nBE STRICT: far OTM (<20% delta) trades are HIGH RISK. DTE under 5 days is near-certain decay. Score honestly.'
+    :'STOCK TRADE MATH:\n- Entry: 
+
+  var prompt='You are a Goldman Sachs senior analyst. Search for current information about "'+tk+'" and generate a comprehensive pre-trade report. Current price: $'+(S?S.toFixed(2):'unknown')+'. '+tradeCtx+'. Return ONLY valid JSON, no markdown: {"company":"Full Company Name","price":'+(S||0)+',"change":'+(liveQ?liveQ.chg:0)+',"pct":'+(liveQ?liveQ.pct:0)+',"sentiment":{"score":72,"direction":"Bullish","bull":65,"neut":25,"bear":10},"bbConsensus":{"buy":4,"neutral":1,"sell":0,"avgPT":210,"upside":12.5},"thesis":"Write a 3-sentence Goldman Sachs style institutional trade thesis here. Be specific to the company and current market conditions.","catalysts":["specific catalyst 1","specific catalyst 2","specific catalyst 3"],"risks":["specific risk 1","specific risk 2"],"earningsDays":45,"macroFit":"Bullish macro regime — rate environment favorable for growth stocks","verdict":{"score":76,"label":"High Conviction","action":"EXECUTE","color":"green"}}';
+
+  var txt=await callAI(prompt,true,1800);
+  var aiData=parseJSON(txt);
+  setStep('step-sent',true);setStep('step-thesis',true);fill.style.width='85%';
+
+  // STEP 5 — build verdict
+  setStep('step-verdict',true);fill.style.width='100%';
+
+  // Remove loading card, render report
+  setTimeout(function(){
+    stepsCard.remove();
+    prog.remove();
+    renderReport(tk,S,liveQ,isOpt,premScore,sigma,G,dte,tp,K,prem,setupGrade,rr,aiData,body);
+  },400);
+}
+
+function renderReport(tk,S,liveQ,isOpt,premScore,sigma,G,dte,tp,K,prem,setupGrade,rr,ai,body){
+  body.innerHTML='';
+  var pct=liveQ?liveQ.pct:0,chg=liveQ?liveQ.chg:0;
+
+  // ── VERDICT CARD
+  var vs=ai&&ai.verdict?ai.verdict.score:premScore||65;
+  var vl=ai&&ai.verdict?ai.verdict.label:vs>=75?'High Conviction':vs>=55?'Moderate Setup':'Proceed with Caution';
+  var va=ai&&ai.verdict?ai.verdict.action:vs>=65?'EXECUTE':'REVIEW';
+  var vc=vs>=70?'#00c853':vs>=50?'#f5c842':'#ff3d57';
+  var circ=263.9,offset=(circ-circ*vs/100).toFixed(1);
+  var vCard=document.createElement('div');
+  vCard.className='verdict-card';
+  vCard.style.cssText='background:linear-gradient(135deg,'+vc+'18,'+vc+'08);border:1px solid '+vc+'40;';
+  vCard.innerHTML=
+    '<div style="font-size:11px;font-weight:700;color:'+vc+';text-transform:uppercase;letter-spacing:1px;margin-bottom:14px">Pre-Trade Report — '+tk+'</div>'+
+    '<div class="verdict-ring"><svg viewBox="0 0 100 100" width="110" height="110"><circle cx="50" cy="50" r="42" stroke="rgba(255,255,255,.08)" stroke-width="9" fill="none"/><circle cx="50" cy="50" r="42" stroke="'+vc+'" stroke-width="9" fill="none" stroke-dasharray="'+circ+'" stroke-dashoffset="'+offset+'" stroke-linecap="round"/></svg><div class="verdict-num" style="color:'+vc+'">'+vs+'</div></div>'+
+    '<div class="verdict-label" style="color:'+vc+'">'+vl.toUpperCase()+'</div>'+
+    '<div class="verdict-action" style="color:'+vc+'">'+va+'</div>'+
+    '<div style="font-size:12px;color:var(--t3);margin-top:10px">$'+(S?S.toFixed(2):'—')+' <span class="'+(pct>=0?'up':'dn')+'">'+(pct>=0?'▲ +':'▼ ')+Math.abs(pct).toFixed(2)+'%</span>'+(ai&&ai.company?' · '+ai.company:'')+'</div>';
+  body.appendChild(vCard);
+
+  // ── SCORE GRID
+  var sent=ai&&ai.sentiment?ai.sentiment:{score:65,direction:'Bullish',bull:60,neut:28,bear:12};
+  var scoreGrid=document.createElement('div');scoreGrid.className='m2';
+  scoreGrid.innerHTML=
+    '<div class="mb"><div class="ml">Sentiment</div><div class="mv" style="color:var(--b)">'+sent.score+'</div><div class="ms '+(sent.score>=60?'up':sent.score>=40?'':'dn')+'">'+sent.direction+'</div></div>'+
+    (isOpt&&premScore!==null?'<div class="mb"><div class="ml">Premium Score</div><div class="mv" style="color:'+(premScore>=65?'var(--g)':premScore>=45?'var(--go)':'var(--r)')+'">'+premScore+'</div><div class="ms">'+(premScore>=65?'Worth It':premScore>=45?'Borderline':'Overpriced')+'</div></div>':'')+
+    (!isOpt&&setupGrade?'<div class="mb"><div class="ml">Setup Grade</div><div class="mv" style="color:'+(setupGrade==='A'||setupGrade==='B+'?'var(--g)':setupGrade==='C'?'var(--go)':'var(--r)')+'">'+setupGrade+'</div><div class="ms">R:R '+(rr?rr.toFixed(2):'—')+'x</div></div>':'')+
+    (isOpt&&sigma?'<div class="mb"><div class="ml">Implied Vol</div><div class="mv" style="color:var(--b)">'+(sigma*100).toFixed(1)+'%</div><div class="ms">'+(sigma<.35?'Below avg':sigma<.55?'Above avg':'Elevated IV')+'</div></div>':'')+
+    '<div class="mb"><div class="ml">BB Consensus</div><div class="mv up">'+(ai&&ai.bbConsensus?ai.bbConsensus.buy+' Buy':'—')+'</div><div class="ms">'+(ai&&ai.bbConsensus?'Avg PT $'+ai.bbConsensus.avgPT:'—')+'</div></div>'+
+    '<div class="mb"><div class="ml">Earnings</div><div class="mv" style="color:var(--go)">'+(ai&&ai.earningsDays?ai.earningsDays+'d':'—')+'</div><div class="ms">'+(ai&&ai.earningsDays&&ai.earningsDays<21?'IV elevated':'Normal')+'</div></div>';
+  body.appendChild(scoreGrid);
+
+  // ── THESIS
+  if(ai&&ai.thesis){
+    var tBox=document.createElement('div');tBox.className='thesis-box';
+    tBox.innerHTML='<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><div style="font-size:18px">🏦</div><div style="font-size:13px;font-weight:700;color:var(--b)">AI Trade Thesis</div></div><p>'+ai.thesis+'</p>';
+    body.appendChild(tBox);
+  }
+
+  // ── CATALYSTS + RISKS
+  if(ai&&(ai.catalysts||ai.risks)){
+    var crCard=document.createElement('div');crCard.className='card';
+    var html='';
+    if(ai.catalysts&&ai.catalysts.length){
+      html+='<div style="font-size:11px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">✦ Catalysts</div>';
+      ai.catalysts.forEach(function(c){html+='<div class="flag-item"><div class="flag-dot" style="background:var(--g)"></div><span>'+c+'</span></div>';});
+    }
+    if(ai.risks&&ai.risks.length){
+      html+='<div style="font-size:11px;font-weight:700;color:var(--r);text-transform:uppercase;letter-spacing:.7px;margin:'+(ai.catalysts?'14px':'0')+'px 0 8px">⚠ Risk Flags</div>';
+      ai.risks.forEach(function(r){html+='<div class="flag-item"><div class="flag-dot" style="background:var(--r)"></div><span>'+r+'</span></div>';});
+    }
+    crCard.innerHTML=html;
+    body.appendChild(crCard);
+  }
+
+  // ── MACRO FIT
+  if(ai&&ai.macroFit){
+    var mBox=document.createElement('div');
+    mBox.className='wb';
+    mBox.innerHTML='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--go)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><p>'+ai.macroFit+'</p>';
+    body.appendChild(mBox);
+  }
+
+  // ── SENTIMENT BARS
+  var sentCard=document.createElement('div');sentCard.className='card';
+  sentCard.innerHTML='<h4>Market Sentiment Breakdown</h4>'+
+    '<div style="display:flex;flex-direction:column;gap:8px">'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Bull</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.bull+'%;height:100%;background:var(--g);border-radius:3px"></div></div><span class="up" style="font-size:11px;font-weight:600;width:28px;text-align:right">'+sent.bull+'%</span></div>'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Neut</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.neut+'%;height:100%;background:var(--go);border-radius:3px"></div></div><span style="font-size:11px;font-weight:600;color:var(--go);width:28px;text-align:right">'+sent.neut+'%</span></div>'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Bear</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.bear+'%;height:100%;background:var(--r);border-radius:3px"></div></div><span class="dn" style="font-size:11px;font-weight:600;width:28px;text-align:right">'+sent.bear+'%</span></div>'+
+    '</div>';
+  body.appendChild(sentCard);
+
+  // ── OPTIONS DETAIL (if applicable)
+  if(isOpt&&G&&sigma){
+    var optCard=document.createElement('div');optCard.className='card';
+    var be=(tp==='call'?K+prem:K-prem).toFixed(2);
+    optCard.innerHTML='<h4>Options Details</h4>'+
+      '<div class="gr"><span style="font-size:13px">Break-Even</span><span style="font-weight:700">$'+be+'</span></div>'+
+      '<div class="gr"><span style="font-size:13px">Delta</span><span style="font-weight:700">'+(G.delta>=0?'+':'')+G.delta.toFixed(3)+'</span></div>'+
+      '<div class="gr"><span style="font-size:13px">Theta / Day</span><span style="font-weight:700;color:var(--r)">-$'+(Math.abs(G.theta)*100*prem).toFixed(2)+'</span></div>'+
+      '<div class="gr" style="border:none"><span style="font-size:13px">Days to Expiry</span><span style="font-weight:700">'+dte+'d</span></div>';
+    body.appendChild(optCard);
+  }
+
+  // ── DISCLAIMER + ROBINHOOD BUTTON
+  var disc=document.createElement('div');
+  disc.style.cssText='font-size:10px;color:var(--t3);text-align:center;padding:12px 0 8px;line-height:1.6';
+  disc.textContent='For informational purposes only. Not financial advice. Always do your own research before trading.';
+  body.appendChild(disc);
+
+  var rbBtn=document.createElement('button');
+  rbBtn.className='rpt-btn';
+  rbBtn.style.cssText='background:linear-gradient(135deg,#00c853,#00a844);color:#000;margin-bottom:14px';
+  rbBtn.textContent='Open Robinhood →';
+  rbBtn.addEventListener('click',function(){window.open('https://robinhood.com','_blank');});
+  body.appendChild(rbBtn);
+}
+
+gel('rpt-back').addEventListener('click',function(){gel('rpt-overlay').classList.remove('open');});
+
+/* ── SIGNALS ── */
+gel('stk').addEventListener('input',function(){this.value=this.value.toUpperCase();});
+gel('signals-load-btn').addEventListener('click',loadSignals);
+gel('stk').addEventListener('keydown',function(e){if(e.key==='Enter')loadSignals();});
+['st-ov','st-news','st-x','st-ana'].forEach(function(id){gel(id).addEventListener('click',function(){document.querySelectorAll('#screen-sentiment .tab').forEach(function(b){b.classList.remove('active');});this.classList.add('active');var map={'st-ov':'sent-ov','st-news':'sent-news','st-x':'sent-x','st-ana':'sent-ana'};Object.keys(map).forEach(function(k){var e=gel(map[k]);if(e)e.style.display=k===id?'block':'none';});});});
+async function loadSignals(){var raw=gel('stk').value.trim();if(!raw)return;var st=gel('sst');st.innerHTML='<span class="spin"></span>Loading signals for '+raw+'...';var prompt='Search for current real-time information about the stock ticker or company "'+raw+'". Return ONLY valid JSON (no markdown, no code blocks): {"ticker":"AAPL","company":"Apple Inc.","price":189.30,"change":2.6,"pct":1.4,"score":72,"direction":"Bullish","bull":68,"neut":22,"bear":10,"earningsDays":45,"analystPT":210,"ptUpside":10.9,"headlines":[{"text":"headline text","source":"Reuters","time":"2h ago","sentiment":"bullish"},{"text":"headline","source":"Bloomberg","time":"4h ago","sentiment":"neutral"},{"text":"headline","source":"FT","time":"6h ago","sentiment":"bearish"},{"text":"headline","source":"WSJ","time":"8h ago","sentiment":"bullish"}],"analysts":[{"firm":"Goldman Sachs","rating":"Buy","action":"Upgrade","pt":220,"upside":16.2},{"firm":"Morgan Stanley","rating":"Overweight","action":"Maintain","pt":210,"upside":10.9},{"firm":"JP Morgan","rating":"Neutral","action":"Maintain","pt":185,"upside":-2.3},{"firm":"Bank of America","rating":"Buy","action":"Maintain","pt":225,"upside":18.9},{"firm":"Citigroup","rating":"Neutral","action":"Maintain","pt":180,"upside":-4.9},{"firm":"UBS","rating":"Buy","action":"Upgrade","pt":215,"upside":13.5}],"xPosts":[{"name":"The Kobeissi Letter","handle":"@KobeissiLetter","role":"Institutional Macro","initials":"KL","color":"#38c8ff","body":"relevant commentary about this specific stock","sentiment":"bullish","likes":"8.4K","rt":"2.1K"},{"name":"Bill Ackman","handle":"@BillAckman","role":"Hedge Fund Pershing Square","initials":"BA","color":"#00c853","body":"relevant commentary","sentiment":"bullish","likes":"14K","rt":"3.8K"},{"name":"Chamath Palihapitiya","handle":"@chamath","role":"VC Social Capital","initials":"CP","color":"#b44dff","body":"relevant commentary","sentiment":"neutral","likes":"22K","rt":"5.2K"},{"name":"Raoul Pal","handle":"@RaoulGMI","role":"Macro Investor GMI","initials":"RP","color":"#f5c842","body":"relevant commentary","sentiment":"bullish","likes":"9.7K","rt":"2.9K"}]}';var txt=await callAI(prompt,true,2500);var d=parseJSON(txt);if(d){st.innerHTML='<span style="color:var(--g)">&#10003; Live signals loaded for '+(d.ticker||raw.toUpperCase())+(d.company?' — '+d.company:'')+'</span>';renderSignals(d);}else{st.innerHTML='<span style="color:var(--r)">&#10007; Could not load signals — check your /api/ai endpoint is running</span>';}}
+function renderSignals(d){var tk=d.ticker||'—';var ov=gel('sent-ov');ov.innerHTML='';var ovCard=document.createElement('div');ovCard.className='card';var sc=d.score||0,dir=(d.direction||'').toUpperCase();var dirPill='pg';if(sc<60)dirPill='pgo';if(sc<40)dirPill='pr';ovCard.innerHTML='<h4>Live Sentiment — '+tk+'</h4>';var inner=document.createElement('div');inner.style.cssText='display:flex;gap:10px';inner.innerHTML='<div style="flex:1;background:var(--gd);border-radius:var(--rs);padding:14px;text-align:center"><div style="font-size:26px;font-weight:800;color:var(--g)">'+sc+'</div><div style="font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-top:2px">Score</div><div class="pill '+dirPill+'" style="margin-top:6px">'+dir+'</div></div>'+'<div style="flex:2;display:flex;flex-direction:column;gap:7px;justify-content:center">'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.bull||0)+'%;height:100%;background:var(--g);border-radius:3px"></div></div><span class="up" style="font-size:11px;font-weight:600;min-width:30px">'+(d.bull||0)+'%</span><span style="font-size:10px;color:var(--t3)">Bull</span></div>'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.neut||0)+'%;height:100%;background:var(--go);border-radius:3px"></div></div><span style="font-size:11px;font-weight:600;color:var(--go);min-width:30px">'+(d.neut||0)+'%</span><span style="font-size:10px;color:var(--t3)">Neut</span></div>'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.bear||0)+'%;height:100%;background:var(--r);border-radius:3px"></div></div><span class="dn" style="font-size:11px;font-weight:600;min-width:30px">'+(d.bear||0)+'%</span><span style="font-size:10px;color:var(--t3)">Bear</span></div>'+'</div>';ovCard.appendChild(inner);var m2=document.createElement('div');m2.className='m2';m2.style.marginTop='11px';m2.innerHTML='<div class="mb"><div class="ml">News</div><div class="mv '+(sc>=60?'up':'dn')+'">'+(d.direction||'—')+'</div><div class="ms">'+(d.headlines?d.headlines.length:0)+' headlines</div></div>'+'<div class="mb"><div class="ml">X/Twitter</div><div class="mv '+(sc>=60?'up':'')+'">'+( d.xPosts&&d.xPosts.length?'Active':'—')+'</div><div class="ms">Pro traders</div></div>'+'<div class="mb"><div class="ml">Avg PT</div><div class="mv">$'+(d.analystPT||'—')+'</div><div class="ms '+((d.ptUpside||0)>=0?'up':'dn')+'">'+(( d.ptUpside||0)>=0?'+':'')+(d.ptUpside||0)+'%</div></div>'+'<div class="mb"><div class="ml">Earnings</div><div class="mv" style="color:var(--go)">'+(d.earningsDays?d.earningsDays+'d':'—')+'</div><div class="ms">'+((d.earningsDays||99)<21?'IV elevated':'Normal')+'</div></div>';ovCard.appendChild(m2);ov.appendChild(ovCard);var nw=gel('sent-news');nw.innerHTML='';var nCard=document.createElement('div');nCard.className='card';nCard.innerHTML='<h4>Headlines — '+tk+'</h4>';(d.headlines||[]).forEach(function(h){var dc=h.sentiment==='bullish'?'var(--g)':h.sentiment==='bearish'?'var(--r)':'var(--go)';var pc=h.sentiment==='bullish'?'pg':h.sentiment==='bearish'?'pr':'pgo';var item=document.createElement('div');item.className='ni';item.innerHTML='<div class="nd" style="background:'+dc+'"></div><div><div style="font-size:13px;line-height:1.5;color:var(--t2)">'+h.text+'</div><div style="font-size:10px;color:var(--t3);margin-top:3px">'+h.source+' '+h.time+'</div><span class="pill '+pc+'" style="margin-top:4px">'+(h.sentiment||'').toUpperCase()+'</span></div>';nCard.appendChild(item);});nw.appendChild(nCard);var xw=gel('sent-x');xw.innerHTML='';var xHdr=document.createElement('div');xHdr.style.cssText='background:var(--bg3);border:1px solid var(--bd);border-radius:var(--rs);padding:10px 13px;margin-bottom:13px;font-size:11px;color:var(--t3)';xHdr.textContent='Verified institutional investors and professional traders only';xw.appendChild(xHdr);(d.xPosts||[]).forEach(function(x){var sc2=x.sentiment==='bullish'?'pg':x.sentiment==='bearish'?'pr':'pgo';var xp=document.createElement('div');xp.className='xp';xp.innerHTML='<div style="display:flex;align-items:center;gap:9px;margin-bottom:10px"><div class="xa" style="background:'+x.color+'22;color:'+x.color+'">'+x.initials+'</div><div style="flex:1"><div style="display:flex;align-items:center"><span style="font-size:13px;font-weight:700">'+x.name+'</span><div class="xv">&#10003;</div></div><div style="font-size:11px;color:var(--t3)">'+x.handle+' — '+x.role+'</div></div><span class="pill '+sc2+'" style="font-size:9px">'+(x.sentiment||'').toUpperCase()+'</span></div><div style="font-size:13px;line-height:1.6;color:var(--t2);margin-bottom:9px">'+x.body+'</div><div style="display:flex;gap:13px"><span style="font-size:11px;color:var(--t3)">'+x.likes+' likes</span><span style="font-size:11px;color:var(--t3)">'+x.rt+' retweets</span></div>';xw.appendChild(xp);});var xFoot=document.createElement('div');xFoot.style.cssText='text-align:center;font-size:10px;color:var(--t3);padding:4px 0 8px';xFoot.textContent='For market context only. Not affiliated with these individuals.';xw.appendChild(xFoot);var aw=gel('sent-ana');aw.innerHTML='';var aCard=document.createElement('div');aCard.className='card';aCard.innerHTML='<h4>Analyst Ratings — '+tk+'</h4>';(d.analysts||[]).forEach(function(a){var up2=a.upside>=0;var rc=(a.rating==='Buy'||a.rating==='Overweight')?'var(--g)':(a.rating==='Sell'||a.rating==='Underweight')?'var(--r)':'var(--go)';var sh=a.firm.indexOf('Goldman')>=0?'GS':a.firm.indexOf('Morgan Stanley')>=0?'MS':a.firm.indexOf('JP')>=0?'JPM':a.firm.indexOf('Bank')>=0?'BAC':a.firm.indexOf('Citi')>=0?'CITI':'UBS';var row=document.createElement('div');row.className='br';row.innerHTML='<div style="display:flex;align-items:center;gap:9px"><div class="bl" style="background:var(--bd3);color:var(--b)">'+sh+'</div><div><div style="font-size:13px;font-weight:700">'+a.firm+'</div><div style="font-size:11px;color:'+rc+'">'+a.action+' — '+a.rating+'</div></div></div><div style="text-align:right"><div style="font-size:17px;font-weight:800;color:'+(up2?'var(--g)':'var(--r)')+'">$'+a.pt+'</div><div style="font-size:11px;color:'+(up2?'var(--g)':'var(--r)')+'">'+(up2?'+':'')+(a.upside||0).toFixed(1)+'%</div></div>';aCard.appendChild(row);});aw.appendChild(aCard);}
+
+/* ── MEDIA ── */
+function openURL(url){window.open(url,'_blank');}
+[['bb-open','https://www.bloomberg.com/live-tv'],['bb-btn','https://www.bloomberg.com/live-tv'],['cnbc-open','https://www.cnbc.com/live-tv/'],['cnbc-btn','https://www.cnbc.com/live-tv/'],['yf-open','https://finance.yahoo.com/live/'],['yf-btn','https://finance.yahoo.com/live/'],['mw-btn','https://www.marketwatch.com'],['sa-btn','https://seekingalpha.com'],['uw-btn','https://unusualwhales.com'],['bz-btn','https://www.benzinga.com'],['fv-btn','https://finviz.com'],['ba-btn','https://www.barrons.com'],['tv-btn','https://www.tradingview.com'],['os-btn','https://optionstrat.com'],['cb-btn','https://www.cboe.com'],['fred-btn','https://fred.stlouisfed.org'],['sec-btn','https://www.sec.gov/cgi-bin/browse-edgar'],['yo-btn','https://finance.yahoo.com/options']].forEach(function(pair){var e=gel(pair[0]);if(e)e.addEventListener('click',(function(url){return function(){openURL(url);};})(pair[1]));});
+['mt-live','mt-charts','mt-news','mt-tools'].forEach(function(id){gel(id).addEventListener('click',function(){document.querySelectorAll('#screen-media .tab').forEach(function(b){b.classList.remove('active');});this.classList.add('active');var map={'mt-live':'m-live','mt-charts':'m-charts','mt-news':'m-news','mt-tools':'m-tools'};Object.keys(map).forEach(function(k){var e=gel(map[k]);if(e)e.style.display=k===id?'block':'none';});});});
+
+/* ── JOURNAL ── */
+gel('open-at-btn').addEventListener('click',openAT);gel('log-first-btn').addEventListener('click',openAT);gel('jt-save-btn').addEventListener('click',saveJTrade);gel('jt-cancel-btn').addEventListener('click',function(){gel('atm').classList.add('hidden');});gel('jt-opt-btn').addEventListener('click',function(){setJtType('option',this);});gel('jt-stk-btn').addEventListener('click',function(){setJtType('stock',this);});gel('ai-recs-btn').addEventListener('click',getAIRecs);gel('clear-j-btn').addEventListener('click',function(){if(confirm('Clear all journal trades?')){journal=[];sv('sfx_journal',[]);renderJournal();}});gel('jt-tk').addEventListener('input',function(){this.value=this.value.toUpperCase();});
+function openAT(){gel('atm').classList.remove('hidden');gel('jt-date').value=new Date().toISOString().split('T')[0];}
+function setJtType(tp,btn){jtType=tp;document.querySelectorAll('#jt-seg .sb').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');gel('jt-of').style.display=tp==='option'?'block':'none';gel('jt-sf').style.display=tp==='stock'?'block':'none';}
+function saveJTrade(){var tk=(gel('jt-tk').value||'').trim().toUpperCase();if(!tk)return;var dir=gel('jt-dir').value,date=gel('jt-date').value,en,ex,qty,pnl,ret,be;if(jtType==='option'){en=parseFloat(gel('jt-en').value)||0;ex=parseFloat(gel('jt-ex').value)||0;qty=parseInt(gel('jt-qty').value)||1;var str=parseFloat(gel('jt-str').value)||0;pnl=(ex-en)*100*qty;ret=en>0?(ex-en)/en*100:0;be=dir==='Call'?str+en:str-en;}else{en=parseFloat(gel('jts-en').value)||0;ex=parseFloat(gel('jts-ex').value)||0;qty=parseInt(gel('jts-qty').value)||0;pnl=(ex-en)*qty;ret=en>0?(ex-en)/en*100:0;be=en;}journal.push({id:Date.now(),date:date,ticker:tk,direction:dir,assetClass:jtType,entry:en,exit:ex,qty:qty,pnl:parseFloat(pnl.toFixed(2)),retPct:parseFloat(ret.toFixed(2)),breakeven:parseFloat(be.toFixed(2)),notes:gel('jt-notes').value.trim(),status:ex>0?'closed':'open'});sv('sfx_journal',journal);renderJournal();gel('atm').classList.add('hidden');['jt-tk','jt-en','jt-ex','jt-str','jts-en','jts-ex','jts-qty','jt-notes'].forEach(function(id){var e=gel(id);if(e)e.value='';});gel('jt-qty').value='1';}
+function renderJournal(){var has=journal.length>0;gel('j-empty').style.display=has?'none':'block';gel('j-stats').style.display=has?'grid':'none';gel('jchart').style.display=has?'block':'none';gel('jai-wrap').style.display=has?'block':'none';gel('j-tt').style.display=has?'block':'none';gel('j-trades').innerHTML='';if(!has)return;var closed=journal.filter(function(t){return t.status==='closed';});var wr=closed.length?Math.round(closed.filter(function(t){return t.pnl>0;}).length/closed.length*100):0;var tot=journal.reduce(function(s,t){return s+t.pnl;},0);var jwrE=gel('jwr');if(jwrE){jwrE.textContent=wr+'%';jwrE.className=wr>=50?'up':'dn';}var jpE=gel('jpnl');if(jpE){jpE.textContent=(tot>=0?'+$':'-$')+Math.abs(tot).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});jpE.className=tot>=0?'up':'dn';}setText('jcnt',journal.length);drawChart(journal,tot);var frag=document.createDocumentFragment();journal.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);}).forEach(function(t){var up2=t.pnl>=0,pc=t.assetClass==='option'?(t.direction==='Call'?'pb':'pr'):(t.direction==='Long'?'pg':'pr');var el=document.createElement('div');el.className='ti';el.innerHTML='<div style="display:flex;justify-content:space-between;margin-bottom:10px"><div><div style="font-size:16px;font-weight:800">'+t.ticker+' <span class="pill '+pc+'">'+t.direction+'</span></div><div style="font-size:10px;color:var(--t3);margin-top:2px">'+(t.assetClass==='option'?'BE $'+t.breakeven+' — ':'')+t.date+'</div></div><div style="text-align:right"><div class="'+(up2?'up':'dn')+'" style="font-size:18px;font-weight:800">'+(up2?'+$':'-$')+Math.abs(t.pnl).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</div><div style="font-size:10px;color:var(--t3);margin-top:2px">'+t.status+'</div></div></div><div class="tst"><div class="tsi">Entry<span>$'+t.entry+'</span></div><div class="tsi">Exit<span>'+(t.exit?'$'+t.exit:'Open')+'</span></div><div class="tsi">Qty<span>'+t.qty+'</span></div><div class="tsi">Return<span class="'+(up2?'up':'dn')+'">'+(up2?'+':'')+t.retPct.toFixed(1)+'%</span></div></div>'+(t.notes?'<div style="font-size:11px;color:var(--t3);margin-top:8px;padding-top:8px;border-top:1px solid var(--bd)">'+t.notes+'</div>':'');frag.appendChild(el);});gel('j-trades').appendChild(frag);}
+function drawChart(trades,tot){var svg=gel('jsvg');if(!svg)return;var jcv=gel('jcv');if(jcv){jcv.textContent=(tot>=0?'+$':'-$')+Math.abs(tot).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});jcv.className=tot>=0?'up':'dn';}var sorted=trades.slice().sort(function(a,b){return new Date(a.date)-new Date(b.date);}),cum=0;var pts=[0].concat(sorted.map(function(t){cum+=t.pnl;return cum;}));var mn=Math.min.apply(null,pts),mx=Math.max.apply(null,pts),rng=mx-mn||1;var px=function(i){return i/(pts.length-1||1)*360+20;},py=function(v){return 170-20-(v-mn)/rng*130;};var poly=pts.map(function(v,i){return px(i)+','+py(v);}).join(' '),col=tot>=0?'#00c853':'#ff3d57';svg.innerHTML='<defs><linearGradient id="cg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="'+col+'" stop-opacity=".28"/><stop offset="100%" stop-color="'+col+'" stop-opacity="0"/></linearGradient></defs><polyline points="'+poly+'" stroke="'+col+'" stroke-width="2" fill="none"/><polygon points="'+poly+' '+px(pts.length-1)+',170 '+px(0)+',170" fill="url(#cg)"/>';}
+async function getAIRecs(){if(journal.length<2){alert('Log at least 2 trades to get AI coaching.');return;}var btn=gel('ai-recs-btn');if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span>Analyzing...';}var closed=journal.filter(function(t){return t.status==='closed';});var wr=closed.length?Math.round(closed.filter(function(t){return t.pnl>0;}).length/closed.length*100):0;var summary={trades:journal.length,winRate:wr,totalPnl:journal.reduce(function(s,t){return s+t.pnl;},0),recentTrades:closed.slice(-10).map(function(t){return{ticker:t.ticker,direction:t.direction,pnl:t.pnl,ret:t.retPct};})};var prompt='You are a professional trading coach. Analyze this journal and give specific actionable coaching. Account: $'+(user.accountSize||'unknown')+', Risk: '+(user.riskPct||2)+'% per trade. Journal: '+JSON.stringify(summary)+'. Return ONLY this JSON with no markdown: {"summary":"1-sentence assessment","recommendations":[{"title":"action title","detail":"specific advice","priority":"high"},{"title":"title","detail":"advice","priority":"medium"},{"title":"title","detail":"advice","priority":"low"}]}';var raw=await callAI(prompt,false,1000);var d=parseJSON(raw);var pC={high:'var(--r)',medium:'var(--go)',low:'var(--g)'};if(d){gel('jai').innerHTML='<p style="font-size:13px;color:var(--t2);margin-bottom:12px;line-height:1.5">'+(d.summary||'')+'</p>'+(d.recommendations||[]).map(function(r){return'<div class="ai-rec"><div class="art" style="color:'+(pC[r.priority]||'var(--b)')+'">'+r.title+' <span style="font-size:9px;opacity:.7;text-transform:uppercase;letter-spacing:.5px">'+r.priority+'</span></div><div class="ard">'+r.detail+'</div></div>';}).join('')+'<button class="abtn" style="background:var(--b);font-size:12px;padding:10px;margin-top:10px" id="ai-refresh-btn">Refresh Analysis</button>';var rb=gel('ai-refresh-btn');if(rb)rb.addEventListener('click',getAIRecs);}else{gel('jai').innerHTML='<p style="color:var(--r);font-size:13px">Could not generate analysis.</p><button class="abtn" style="background:var(--b);font-size:13px;padding:11px;margin-top:8px" id="ai-retry-btn">Retry</button>';var rt=gel('ai-retry-btn');if(rt)rt.addEventListener('click',getAIRecs);}}
+
+/* ── INIT ── */
+(function(){
+  var u=ld('sfx_user',null);if(u&&u.name)user=u;
+  applyUser();
+  var t=ld('sfx_theme','dark');applyTheme(t);highlightThBtn(t);
+  journal=ld('sfx_journal',[]);
+  watchlist=ld('sfx_watchlist',['AAPL','PLTR','NVDA','SPY']);
+  renderWatchlist(null);renderJournal();populateExpiries();loadPrices();
+  setInterval(loadPrices,90000);
+})();
+})();
+</script>
+</body>
+</html>
++(gel('se-in').value||'?')+' | Target: 
+
+  var prompt='You are a Goldman Sachs senior analyst. Search for current information about "'+tk+'" and generate a comprehensive pre-trade report. Current price: $'+(S?S.toFixed(2):'unknown')+'. '+tradeCtx+'. Return ONLY valid JSON, no markdown: {"company":"Full Company Name","price":'+(S||0)+',"change":'+(liveQ?liveQ.chg:0)+',"pct":'+(liveQ?liveQ.pct:0)+',"sentiment":{"score":72,"direction":"Bullish","bull":65,"neut":25,"bear":10},"bbConsensus":{"buy":4,"neutral":1,"sell":0,"avgPT":210,"upside":12.5},"thesis":"Write a 3-sentence Goldman Sachs style institutional trade thesis here. Be specific to the company and current market conditions.","catalysts":["specific catalyst 1","specific catalyst 2","specific catalyst 3"],"risks":["specific risk 1","specific risk 2"],"earningsDays":45,"macroFit":"Bullish macro regime — rate environment favorable for growth stocks","verdict":{"score":76,"label":"High Conviction","action":"EXECUTE","color":"green"}}';
+
+  var txt=await callAI(prompt,true,1800);
+  var aiData=parseJSON(txt);
+  setStep('step-sent',true);setStep('step-thesis',true);fill.style.width='85%';
+
+  // STEP 5 — build verdict
+  setStep('step-verdict',true);fill.style.width='100%';
+
+  // Remove loading card, render report
+  setTimeout(function(){
+    stepsCard.remove();
+    prog.remove();
+    renderReport(tk,S,liveQ,isOpt,premScore,sigma,G,dte,tp,K,prem,setupGrade,rr,aiData,body);
+  },400);
+}
+
+function renderReport(tk,S,liveQ,isOpt,premScore,sigma,G,dte,tp,K,prem,setupGrade,rr,ai,body){
+  body.innerHTML='';
+  var pct=liveQ?liveQ.pct:0,chg=liveQ?liveQ.chg:0;
+
+  // ── VERDICT CARD
+  var vs=ai&&ai.verdict?ai.verdict.score:premScore||65;
+  var vl=ai&&ai.verdict?ai.verdict.label:vs>=75?'High Conviction':vs>=55?'Moderate Setup':'Proceed with Caution';
+  var va=ai&&ai.verdict?ai.verdict.action:vs>=65?'EXECUTE':'REVIEW';
+  var vc=vs>=70?'#00c853':vs>=50?'#f5c842':'#ff3d57';
+  var circ=263.9,offset=(circ-circ*vs/100).toFixed(1);
+  var vCard=document.createElement('div');
+  vCard.className='verdict-card';
+  vCard.style.cssText='background:linear-gradient(135deg,'+vc+'18,'+vc+'08);border:1px solid '+vc+'40;';
+  vCard.innerHTML=
+    '<div style="font-size:11px;font-weight:700;color:'+vc+';text-transform:uppercase;letter-spacing:1px;margin-bottom:14px">Pre-Trade Report — '+tk+'</div>'+
+    '<div class="verdict-ring"><svg viewBox="0 0 100 100" width="110" height="110"><circle cx="50" cy="50" r="42" stroke="rgba(255,255,255,.08)" stroke-width="9" fill="none"/><circle cx="50" cy="50" r="42" stroke="'+vc+'" stroke-width="9" fill="none" stroke-dasharray="'+circ+'" stroke-dashoffset="'+offset+'" stroke-linecap="round"/></svg><div class="verdict-num" style="color:'+vc+'">'+vs+'</div></div>'+
+    '<div class="verdict-label" style="color:'+vc+'">'+vl.toUpperCase()+'</div>'+
+    '<div class="verdict-action" style="color:'+vc+'">'+va+'</div>'+
+    '<div style="font-size:12px;color:var(--t3);margin-top:10px">$'+(S?S.toFixed(2):'—')+' <span class="'+(pct>=0?'up':'dn')+'">'+(pct>=0?'▲ +':'▼ ')+Math.abs(pct).toFixed(2)+'%</span>'+(ai&&ai.company?' · '+ai.company:'')+'</div>';
+  body.appendChild(vCard);
+
+  // ── SCORE GRID
+  var sent=ai&&ai.sentiment?ai.sentiment:{score:65,direction:'Bullish',bull:60,neut:28,bear:12};
+  var scoreGrid=document.createElement('div');scoreGrid.className='m2';
+  scoreGrid.innerHTML=
+    '<div class="mb"><div class="ml">Sentiment</div><div class="mv" style="color:var(--b)">'+sent.score+'</div><div class="ms '+(sent.score>=60?'up':sent.score>=40?'':'dn')+'">'+sent.direction+'</div></div>'+
+    (isOpt&&premScore!==null?'<div class="mb"><div class="ml">Premium Score</div><div class="mv" style="color:'+(premScore>=65?'var(--g)':premScore>=45?'var(--go)':'var(--r)')+'">'+premScore+'</div><div class="ms">'+(premScore>=65?'Worth It':premScore>=45?'Borderline':'Overpriced')+'</div></div>':'')+
+    (!isOpt&&setupGrade?'<div class="mb"><div class="ml">Setup Grade</div><div class="mv" style="color:'+(setupGrade==='A'||setupGrade==='B+'?'var(--g)':setupGrade==='C'?'var(--go)':'var(--r)')+'">'+setupGrade+'</div><div class="ms">R:R '+(rr?rr.toFixed(2):'—')+'x</div></div>':'')+
+    (isOpt&&sigma?'<div class="mb"><div class="ml">Implied Vol</div><div class="mv" style="color:var(--b)">'+(sigma*100).toFixed(1)+'%</div><div class="ms">'+(sigma<.35?'Below avg':sigma<.55?'Above avg':'Elevated IV')+'</div></div>':'')+
+    '<div class="mb"><div class="ml">BB Consensus</div><div class="mv up">'+(ai&&ai.bbConsensus?ai.bbConsensus.buy+' Buy':'—')+'</div><div class="ms">'+(ai&&ai.bbConsensus?'Avg PT $'+ai.bbConsensus.avgPT:'—')+'</div></div>'+
+    '<div class="mb"><div class="ml">Earnings</div><div class="mv" style="color:var(--go)">'+(ai&&ai.earningsDays?ai.earningsDays+'d':'—')+'</div><div class="ms">'+(ai&&ai.earningsDays&&ai.earningsDays<21?'IV elevated':'Normal')+'</div></div>';
+  body.appendChild(scoreGrid);
+
+  // ── THESIS
+  if(ai&&ai.thesis){
+    var tBox=document.createElement('div');tBox.className='thesis-box';
+    tBox.innerHTML='<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><div style="font-size:18px">🏦</div><div style="font-size:13px;font-weight:700;color:var(--b)">AI Trade Thesis</div></div><p>'+ai.thesis+'</p>';
+    body.appendChild(tBox);
+  }
+
+  // ── CATALYSTS + RISKS
+  if(ai&&(ai.catalysts||ai.risks)){
+    var crCard=document.createElement('div');crCard.className='card';
+    var html='';
+    if(ai.catalysts&&ai.catalysts.length){
+      html+='<div style="font-size:11px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">✦ Catalysts</div>';
+      ai.catalysts.forEach(function(c){html+='<div class="flag-item"><div class="flag-dot" style="background:var(--g)"></div><span>'+c+'</span></div>';});
+    }
+    if(ai.risks&&ai.risks.length){
+      html+='<div style="font-size:11px;font-weight:700;color:var(--r);text-transform:uppercase;letter-spacing:.7px;margin:'+(ai.catalysts?'14px':'0')+'px 0 8px">⚠ Risk Flags</div>';
+      ai.risks.forEach(function(r){html+='<div class="flag-item"><div class="flag-dot" style="background:var(--r)"></div><span>'+r+'</span></div>';});
+    }
+    crCard.innerHTML=html;
+    body.appendChild(crCard);
+  }
+
+  // ── MACRO FIT
+  if(ai&&ai.macroFit){
+    var mBox=document.createElement('div');
+    mBox.className='wb';
+    mBox.innerHTML='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--go)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><p>'+ai.macroFit+'</p>';
+    body.appendChild(mBox);
+  }
+
+  // ── SENTIMENT BARS
+  var sentCard=document.createElement('div');sentCard.className='card';
+  sentCard.innerHTML='<h4>Market Sentiment Breakdown</h4>'+
+    '<div style="display:flex;flex-direction:column;gap:8px">'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Bull</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.bull+'%;height:100%;background:var(--g);border-radius:3px"></div></div><span class="up" style="font-size:11px;font-weight:600;width:28px;text-align:right">'+sent.bull+'%</span></div>'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Neut</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.neut+'%;height:100%;background:var(--go);border-radius:3px"></div></div><span style="font-size:11px;font-weight:600;color:var(--go);width:28px;text-align:right">'+sent.neut+'%</span></div>'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Bear</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.bear+'%;height:100%;background:var(--r);border-radius:3px"></div></div><span class="dn" style="font-size:11px;font-weight:600;width:28px;text-align:right">'+sent.bear+'%</span></div>'+
+    '</div>';
+  body.appendChild(sentCard);
+
+  // ── OPTIONS DETAIL (if applicable)
+  if(isOpt&&G&&sigma){
+    var optCard=document.createElement('div');optCard.className='card';
+    var be=(tp==='call'?K+prem:K-prem).toFixed(2);
+    optCard.innerHTML='<h4>Options Details</h4>'+
+      '<div class="gr"><span style="font-size:13px">Break-Even</span><span style="font-weight:700">$'+be+'</span></div>'+
+      '<div class="gr"><span style="font-size:13px">Delta</span><span style="font-weight:700">'+(G.delta>=0?'+':'')+G.delta.toFixed(3)+'</span></div>'+
+      '<div class="gr"><span style="font-size:13px">Theta / Day</span><span style="font-weight:700;color:var(--r)">-$'+(Math.abs(G.theta)*100*prem).toFixed(2)+'</span></div>'+
+      '<div class="gr" style="border:none"><span style="font-size:13px">Days to Expiry</span><span style="font-weight:700">'+dte+'d</span></div>';
+    body.appendChild(optCard);
+  }
+
+  // ── DISCLAIMER + ROBINHOOD BUTTON
+  var disc=document.createElement('div');
+  disc.style.cssText='font-size:10px;color:var(--t3);text-align:center;padding:12px 0 8px;line-height:1.6';
+  disc.textContent='For informational purposes only. Not financial advice. Always do your own research before trading.';
+  body.appendChild(disc);
+
+  var rbBtn=document.createElement('button');
+  rbBtn.className='rpt-btn';
+  rbBtn.style.cssText='background:linear-gradient(135deg,#00c853,#00a844);color:#000;margin-bottom:14px';
+  rbBtn.textContent='Open Robinhood →';
+  rbBtn.addEventListener('click',function(){window.open('https://robinhood.com','_blank');});
+  body.appendChild(rbBtn);
+}
+
+gel('rpt-back').addEventListener('click',function(){gel('rpt-overlay').classList.remove('open');});
+
+/* ── SIGNALS ── */
+gel('stk').addEventListener('input',function(){this.value=this.value.toUpperCase();});
+gel('signals-load-btn').addEventListener('click',loadSignals);
+gel('stk').addEventListener('keydown',function(e){if(e.key==='Enter')loadSignals();});
+['st-ov','st-news','st-x','st-ana'].forEach(function(id){gel(id).addEventListener('click',function(){document.querySelectorAll('#screen-sentiment .tab').forEach(function(b){b.classList.remove('active');});this.classList.add('active');var map={'st-ov':'sent-ov','st-news':'sent-news','st-x':'sent-x','st-ana':'sent-ana'};Object.keys(map).forEach(function(k){var e=gel(map[k]);if(e)e.style.display=k===id?'block':'none';});});});
+async function loadSignals(){var raw=gel('stk').value.trim();if(!raw)return;var st=gel('sst');st.innerHTML='<span class="spin"></span>Loading signals for '+raw+'...';var prompt='Search for current real-time information about the stock ticker or company "'+raw+'". Return ONLY valid JSON (no markdown, no code blocks): {"ticker":"AAPL","company":"Apple Inc.","price":189.30,"change":2.6,"pct":1.4,"score":72,"direction":"Bullish","bull":68,"neut":22,"bear":10,"earningsDays":45,"analystPT":210,"ptUpside":10.9,"headlines":[{"text":"headline text","source":"Reuters","time":"2h ago","sentiment":"bullish"},{"text":"headline","source":"Bloomberg","time":"4h ago","sentiment":"neutral"},{"text":"headline","source":"FT","time":"6h ago","sentiment":"bearish"},{"text":"headline","source":"WSJ","time":"8h ago","sentiment":"bullish"}],"analysts":[{"firm":"Goldman Sachs","rating":"Buy","action":"Upgrade","pt":220,"upside":16.2},{"firm":"Morgan Stanley","rating":"Overweight","action":"Maintain","pt":210,"upside":10.9},{"firm":"JP Morgan","rating":"Neutral","action":"Maintain","pt":185,"upside":-2.3},{"firm":"Bank of America","rating":"Buy","action":"Maintain","pt":225,"upside":18.9},{"firm":"Citigroup","rating":"Neutral","action":"Maintain","pt":180,"upside":-4.9},{"firm":"UBS","rating":"Buy","action":"Upgrade","pt":215,"upside":13.5}],"xPosts":[{"name":"The Kobeissi Letter","handle":"@KobeissiLetter","role":"Institutional Macro","initials":"KL","color":"#38c8ff","body":"relevant commentary about this specific stock","sentiment":"bullish","likes":"8.4K","rt":"2.1K"},{"name":"Bill Ackman","handle":"@BillAckman","role":"Hedge Fund Pershing Square","initials":"BA","color":"#00c853","body":"relevant commentary","sentiment":"bullish","likes":"14K","rt":"3.8K"},{"name":"Chamath Palihapitiya","handle":"@chamath","role":"VC Social Capital","initials":"CP","color":"#b44dff","body":"relevant commentary","sentiment":"neutral","likes":"22K","rt":"5.2K"},{"name":"Raoul Pal","handle":"@RaoulGMI","role":"Macro Investor GMI","initials":"RP","color":"#f5c842","body":"relevant commentary","sentiment":"bullish","likes":"9.7K","rt":"2.9K"}]}';var txt=await callAI(prompt,true,2500);var d=parseJSON(txt);if(d){st.innerHTML='<span style="color:var(--g)">&#10003; Live signals loaded for '+(d.ticker||raw.toUpperCase())+(d.company?' — '+d.company:'')+'</span>';renderSignals(d);}else{st.innerHTML='<span style="color:var(--r)">&#10007; Could not load signals — check your /api/ai endpoint is running</span>';}}
+function renderSignals(d){var tk=d.ticker||'—';var ov=gel('sent-ov');ov.innerHTML='';var ovCard=document.createElement('div');ovCard.className='card';var sc=d.score||0,dir=(d.direction||'').toUpperCase();var dirPill='pg';if(sc<60)dirPill='pgo';if(sc<40)dirPill='pr';ovCard.innerHTML='<h4>Live Sentiment — '+tk+'</h4>';var inner=document.createElement('div');inner.style.cssText='display:flex;gap:10px';inner.innerHTML='<div style="flex:1;background:var(--gd);border-radius:var(--rs);padding:14px;text-align:center"><div style="font-size:26px;font-weight:800;color:var(--g)">'+sc+'</div><div style="font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-top:2px">Score</div><div class="pill '+dirPill+'" style="margin-top:6px">'+dir+'</div></div>'+'<div style="flex:2;display:flex;flex-direction:column;gap:7px;justify-content:center">'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.bull||0)+'%;height:100%;background:var(--g);border-radius:3px"></div></div><span class="up" style="font-size:11px;font-weight:600;min-width:30px">'+(d.bull||0)+'%</span><span style="font-size:10px;color:var(--t3)">Bull</span></div>'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.neut||0)+'%;height:100%;background:var(--go);border-radius:3px"></div></div><span style="font-size:11px;font-weight:600;color:var(--go);min-width:30px">'+(d.neut||0)+'%</span><span style="font-size:10px;color:var(--t3)">Neut</span></div>'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.bear||0)+'%;height:100%;background:var(--r);border-radius:3px"></div></div><span class="dn" style="font-size:11px;font-weight:600;min-width:30px">'+(d.bear||0)+'%</span><span style="font-size:10px;color:var(--t3)">Bear</span></div>'+'</div>';ovCard.appendChild(inner);var m2=document.createElement('div');m2.className='m2';m2.style.marginTop='11px';m2.innerHTML='<div class="mb"><div class="ml">News</div><div class="mv '+(sc>=60?'up':'dn')+'">'+(d.direction||'—')+'</div><div class="ms">'+(d.headlines?d.headlines.length:0)+' headlines</div></div>'+'<div class="mb"><div class="ml">X/Twitter</div><div class="mv '+(sc>=60?'up':'')+'">'+( d.xPosts&&d.xPosts.length?'Active':'—')+'</div><div class="ms">Pro traders</div></div>'+'<div class="mb"><div class="ml">Avg PT</div><div class="mv">$'+(d.analystPT||'—')+'</div><div class="ms '+((d.ptUpside||0)>=0?'up':'dn')+'">'+(( d.ptUpside||0)>=0?'+':'')+(d.ptUpside||0)+'%</div></div>'+'<div class="mb"><div class="ml">Earnings</div><div class="mv" style="color:var(--go)">'+(d.earningsDays?d.earningsDays+'d':'—')+'</div><div class="ms">'+((d.earningsDays||99)<21?'IV elevated':'Normal')+'</div></div>';ovCard.appendChild(m2);ov.appendChild(ovCard);var nw=gel('sent-news');nw.innerHTML='';var nCard=document.createElement('div');nCard.className='card';nCard.innerHTML='<h4>Headlines — '+tk+'</h4>';(d.headlines||[]).forEach(function(h){var dc=h.sentiment==='bullish'?'var(--g)':h.sentiment==='bearish'?'var(--r)':'var(--go)';var pc=h.sentiment==='bullish'?'pg':h.sentiment==='bearish'?'pr':'pgo';var item=document.createElement('div');item.className='ni';item.innerHTML='<div class="nd" style="background:'+dc+'"></div><div><div style="font-size:13px;line-height:1.5;color:var(--t2)">'+h.text+'</div><div style="font-size:10px;color:var(--t3);margin-top:3px">'+h.source+' '+h.time+'</div><span class="pill '+pc+'" style="margin-top:4px">'+(h.sentiment||'').toUpperCase()+'</span></div>';nCard.appendChild(item);});nw.appendChild(nCard);var xw=gel('sent-x');xw.innerHTML='';var xHdr=document.createElement('div');xHdr.style.cssText='background:var(--bg3);border:1px solid var(--bd);border-radius:var(--rs);padding:10px 13px;margin-bottom:13px;font-size:11px;color:var(--t3)';xHdr.textContent='Verified institutional investors and professional traders only';xw.appendChild(xHdr);(d.xPosts||[]).forEach(function(x){var sc2=x.sentiment==='bullish'?'pg':x.sentiment==='bearish'?'pr':'pgo';var xp=document.createElement('div');xp.className='xp';xp.innerHTML='<div style="display:flex;align-items:center;gap:9px;margin-bottom:10px"><div class="xa" style="background:'+x.color+'22;color:'+x.color+'">'+x.initials+'</div><div style="flex:1"><div style="display:flex;align-items:center"><span style="font-size:13px;font-weight:700">'+x.name+'</span><div class="xv">&#10003;</div></div><div style="font-size:11px;color:var(--t3)">'+x.handle+' — '+x.role+'</div></div><span class="pill '+sc2+'" style="font-size:9px">'+(x.sentiment||'').toUpperCase()+'</span></div><div style="font-size:13px;line-height:1.6;color:var(--t2);margin-bottom:9px">'+x.body+'</div><div style="display:flex;gap:13px"><span style="font-size:11px;color:var(--t3)">'+x.likes+' likes</span><span style="font-size:11px;color:var(--t3)">'+x.rt+' retweets</span></div>';xw.appendChild(xp);});var xFoot=document.createElement('div');xFoot.style.cssText='text-align:center;font-size:10px;color:var(--t3);padding:4px 0 8px';xFoot.textContent='For market context only. Not affiliated with these individuals.';xw.appendChild(xFoot);var aw=gel('sent-ana');aw.innerHTML='';var aCard=document.createElement('div');aCard.className='card';aCard.innerHTML='<h4>Analyst Ratings — '+tk+'</h4>';(d.analysts||[]).forEach(function(a){var up2=a.upside>=0;var rc=(a.rating==='Buy'||a.rating==='Overweight')?'var(--g)':(a.rating==='Sell'||a.rating==='Underweight')?'var(--r)':'var(--go)';var sh=a.firm.indexOf('Goldman')>=0?'GS':a.firm.indexOf('Morgan Stanley')>=0?'MS':a.firm.indexOf('JP')>=0?'JPM':a.firm.indexOf('Bank')>=0?'BAC':a.firm.indexOf('Citi')>=0?'CITI':'UBS';var row=document.createElement('div');row.className='br';row.innerHTML='<div style="display:flex;align-items:center;gap:9px"><div class="bl" style="background:var(--bd3);color:var(--b)">'+sh+'</div><div><div style="font-size:13px;font-weight:700">'+a.firm+'</div><div style="font-size:11px;color:'+rc+'">'+a.action+' — '+a.rating+'</div></div></div><div style="text-align:right"><div style="font-size:17px;font-weight:800;color:'+(up2?'var(--g)':'var(--r)')+'">$'+a.pt+'</div><div style="font-size:11px;color:'+(up2?'var(--g)':'var(--r)')+'">'+(up2?'+':'')+(a.upside||0).toFixed(1)+'%</div></div>';aCard.appendChild(row);});aw.appendChild(aCard);}
+
+/* ── MEDIA ── */
+function openURL(url){window.open(url,'_blank');}
+[['bb-open','https://www.bloomberg.com/live-tv'],['bb-btn','https://www.bloomberg.com/live-tv'],['cnbc-open','https://www.cnbc.com/live-tv/'],['cnbc-btn','https://www.cnbc.com/live-tv/'],['yf-open','https://finance.yahoo.com/live/'],['yf-btn','https://finance.yahoo.com/live/'],['mw-btn','https://www.marketwatch.com'],['sa-btn','https://seekingalpha.com'],['uw-btn','https://unusualwhales.com'],['bz-btn','https://www.benzinga.com'],['fv-btn','https://finviz.com'],['ba-btn','https://www.barrons.com'],['tv-btn','https://www.tradingview.com'],['os-btn','https://optionstrat.com'],['cb-btn','https://www.cboe.com'],['fred-btn','https://fred.stlouisfed.org'],['sec-btn','https://www.sec.gov/cgi-bin/browse-edgar'],['yo-btn','https://finance.yahoo.com/options']].forEach(function(pair){var e=gel(pair[0]);if(e)e.addEventListener('click',(function(url){return function(){openURL(url);};})(pair[1]));});
+['mt-live','mt-charts','mt-news','mt-tools'].forEach(function(id){gel(id).addEventListener('click',function(){document.querySelectorAll('#screen-media .tab').forEach(function(b){b.classList.remove('active');});this.classList.add('active');var map={'mt-live':'m-live','mt-charts':'m-charts','mt-news':'m-news','mt-tools':'m-tools'};Object.keys(map).forEach(function(k){var e=gel(map[k]);if(e)e.style.display=k===id?'block':'none';});});});
+
+/* ── JOURNAL ── */
+gel('open-at-btn').addEventListener('click',openAT);gel('log-first-btn').addEventListener('click',openAT);gel('jt-save-btn').addEventListener('click',saveJTrade);gel('jt-cancel-btn').addEventListener('click',function(){gel('atm').classList.add('hidden');});gel('jt-opt-btn').addEventListener('click',function(){setJtType('option',this);});gel('jt-stk-btn').addEventListener('click',function(){setJtType('stock',this);});gel('ai-recs-btn').addEventListener('click',getAIRecs);gel('clear-j-btn').addEventListener('click',function(){if(confirm('Clear all journal trades?')){journal=[];sv('sfx_journal',[]);renderJournal();}});gel('jt-tk').addEventListener('input',function(){this.value=this.value.toUpperCase();});
+function openAT(){gel('atm').classList.remove('hidden');gel('jt-date').value=new Date().toISOString().split('T')[0];}
+function setJtType(tp,btn){jtType=tp;document.querySelectorAll('#jt-seg .sb').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');gel('jt-of').style.display=tp==='option'?'block':'none';gel('jt-sf').style.display=tp==='stock'?'block':'none';}
+function saveJTrade(){var tk=(gel('jt-tk').value||'').trim().toUpperCase();if(!tk)return;var dir=gel('jt-dir').value,date=gel('jt-date').value,en,ex,qty,pnl,ret,be;if(jtType==='option'){en=parseFloat(gel('jt-en').value)||0;ex=parseFloat(gel('jt-ex').value)||0;qty=parseInt(gel('jt-qty').value)||1;var str=parseFloat(gel('jt-str').value)||0;pnl=(ex-en)*100*qty;ret=en>0?(ex-en)/en*100:0;be=dir==='Call'?str+en:str-en;}else{en=parseFloat(gel('jts-en').value)||0;ex=parseFloat(gel('jts-ex').value)||0;qty=parseInt(gel('jts-qty').value)||0;pnl=(ex-en)*qty;ret=en>0?(ex-en)/en*100:0;be=en;}journal.push({id:Date.now(),date:date,ticker:tk,direction:dir,assetClass:jtType,entry:en,exit:ex,qty:qty,pnl:parseFloat(pnl.toFixed(2)),retPct:parseFloat(ret.toFixed(2)),breakeven:parseFloat(be.toFixed(2)),notes:gel('jt-notes').value.trim(),status:ex>0?'closed':'open'});sv('sfx_journal',journal);renderJournal();gel('atm').classList.add('hidden');['jt-tk','jt-en','jt-ex','jt-str','jts-en','jts-ex','jts-qty','jt-notes'].forEach(function(id){var e=gel(id);if(e)e.value='';});gel('jt-qty').value='1';}
+function renderJournal(){var has=journal.length>0;gel('j-empty').style.display=has?'none':'block';gel('j-stats').style.display=has?'grid':'none';gel('jchart').style.display=has?'block':'none';gel('jai-wrap').style.display=has?'block':'none';gel('j-tt').style.display=has?'block':'none';gel('j-trades').innerHTML='';if(!has)return;var closed=journal.filter(function(t){return t.status==='closed';});var wr=closed.length?Math.round(closed.filter(function(t){return t.pnl>0;}).length/closed.length*100):0;var tot=journal.reduce(function(s,t){return s+t.pnl;},0);var jwrE=gel('jwr');if(jwrE){jwrE.textContent=wr+'%';jwrE.className=wr>=50?'up':'dn';}var jpE=gel('jpnl');if(jpE){jpE.textContent=(tot>=0?'+$':'-$')+Math.abs(tot).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});jpE.className=tot>=0?'up':'dn';}setText('jcnt',journal.length);drawChart(journal,tot);var frag=document.createDocumentFragment();journal.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);}).forEach(function(t){var up2=t.pnl>=0,pc=t.assetClass==='option'?(t.direction==='Call'?'pb':'pr'):(t.direction==='Long'?'pg':'pr');var el=document.createElement('div');el.className='ti';el.innerHTML='<div style="display:flex;justify-content:space-between;margin-bottom:10px"><div><div style="font-size:16px;font-weight:800">'+t.ticker+' <span class="pill '+pc+'">'+t.direction+'</span></div><div style="font-size:10px;color:var(--t3);margin-top:2px">'+(t.assetClass==='option'?'BE $'+t.breakeven+' — ':'')+t.date+'</div></div><div style="text-align:right"><div class="'+(up2?'up':'dn')+'" style="font-size:18px;font-weight:800">'+(up2?'+$':'-$')+Math.abs(t.pnl).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</div><div style="font-size:10px;color:var(--t3);margin-top:2px">'+t.status+'</div></div></div><div class="tst"><div class="tsi">Entry<span>$'+t.entry+'</span></div><div class="tsi">Exit<span>'+(t.exit?'$'+t.exit:'Open')+'</span></div><div class="tsi">Qty<span>'+t.qty+'</span></div><div class="tsi">Return<span class="'+(up2?'up':'dn')+'">'+(up2?'+':'')+t.retPct.toFixed(1)+'%</span></div></div>'+(t.notes?'<div style="font-size:11px;color:var(--t3);margin-top:8px;padding-top:8px;border-top:1px solid var(--bd)">'+t.notes+'</div>':'');frag.appendChild(el);});gel('j-trades').appendChild(frag);}
+function drawChart(trades,tot){var svg=gel('jsvg');if(!svg)return;var jcv=gel('jcv');if(jcv){jcv.textContent=(tot>=0?'+$':'-$')+Math.abs(tot).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});jcv.className=tot>=0?'up':'dn';}var sorted=trades.slice().sort(function(a,b){return new Date(a.date)-new Date(b.date);}),cum=0;var pts=[0].concat(sorted.map(function(t){cum+=t.pnl;return cum;}));var mn=Math.min.apply(null,pts),mx=Math.max.apply(null,pts),rng=mx-mn||1;var px=function(i){return i/(pts.length-1||1)*360+20;},py=function(v){return 170-20-(v-mn)/rng*130;};var poly=pts.map(function(v,i){return px(i)+','+py(v);}).join(' '),col=tot>=0?'#00c853':'#ff3d57';svg.innerHTML='<defs><linearGradient id="cg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="'+col+'" stop-opacity=".28"/><stop offset="100%" stop-color="'+col+'" stop-opacity="0"/></linearGradient></defs><polyline points="'+poly+'" stroke="'+col+'" stroke-width="2" fill="none"/><polygon points="'+poly+' '+px(pts.length-1)+',170 '+px(0)+',170" fill="url(#cg)"/>';}
+async function getAIRecs(){if(journal.length<2){alert('Log at least 2 trades to get AI coaching.');return;}var btn=gel('ai-recs-btn');if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span>Analyzing...';}var closed=journal.filter(function(t){return t.status==='closed';});var wr=closed.length?Math.round(closed.filter(function(t){return t.pnl>0;}).length/closed.length*100):0;var summary={trades:journal.length,winRate:wr,totalPnl:journal.reduce(function(s,t){return s+t.pnl;},0),recentTrades:closed.slice(-10).map(function(t){return{ticker:t.ticker,direction:t.direction,pnl:t.pnl,ret:t.retPct};})};var prompt='You are a professional trading coach. Analyze this journal and give specific actionable coaching. Account: $'+(user.accountSize||'unknown')+', Risk: '+(user.riskPct||2)+'% per trade. Journal: '+JSON.stringify(summary)+'. Return ONLY this JSON with no markdown: {"summary":"1-sentence assessment","recommendations":[{"title":"action title","detail":"specific advice","priority":"high"},{"title":"title","detail":"advice","priority":"medium"},{"title":"title","detail":"advice","priority":"low"}]}';var raw=await callAI(prompt,false,1000);var d=parseJSON(raw);var pC={high:'var(--r)',medium:'var(--go)',low:'var(--g)'};if(d){gel('jai').innerHTML='<p style="font-size:13px;color:var(--t2);margin-bottom:12px;line-height:1.5">'+(d.summary||'')+'</p>'+(d.recommendations||[]).map(function(r){return'<div class="ai-rec"><div class="art" style="color:'+(pC[r.priority]||'var(--b)')+'">'+r.title+' <span style="font-size:9px;opacity:.7;text-transform:uppercase;letter-spacing:.5px">'+r.priority+'</span></div><div class="ard">'+r.detail+'</div></div>';}).join('')+'<button class="abtn" style="background:var(--b);font-size:12px;padding:10px;margin-top:10px" id="ai-refresh-btn">Refresh Analysis</button>';var rb=gel('ai-refresh-btn');if(rb)rb.addEventListener('click',getAIRecs);}else{gel('jai').innerHTML='<p style="color:var(--r);font-size:13px">Could not generate analysis.</p><button class="abtn" style="background:var(--b);font-size:13px;padding:11px;margin-top:8px" id="ai-retry-btn">Retry</button>';var rt=gel('ai-retry-btn');if(rt)rt.addEventListener('click',getAIRecs);}}
+
+/* ── INIT ── */
+(function(){
+  var u=ld('sfx_user',null);if(u&&u.name)user=u;
+  applyUser();
+  var t=ld('sfx_theme','dark');applyTheme(t);highlightThBtn(t);
+  journal=ld('sfx_journal',[]);
+  watchlist=ld('sfx_watchlist',['AAPL','PLTR','NVDA','SPY']);
+  renderWatchlist(null);renderJournal();populateExpiries();loadPrices();
+  setInterval(loadPrices,90000);
+})();
+})();
+</script>
+</body>
+</html>
++(gel('st-in').value||'?')+' | Stop: 
+
+  var prompt='You are a Goldman Sachs senior analyst. Search for current information about "'+tk+'" and generate a comprehensive pre-trade report. Current price: $'+(S?S.toFixed(2):'unknown')+'. '+tradeCtx+'. Return ONLY valid JSON, no markdown: {"company":"Full Company Name","price":'+(S||0)+',"change":'+(liveQ?liveQ.chg:0)+',"pct":'+(liveQ?liveQ.pct:0)+',"sentiment":{"score":72,"direction":"Bullish","bull":65,"neut":25,"bear":10},"bbConsensus":{"buy":4,"neutral":1,"sell":0,"avgPT":210,"upside":12.5},"thesis":"Write a 3-sentence Goldman Sachs style institutional trade thesis here. Be specific to the company and current market conditions.","catalysts":["specific catalyst 1","specific catalyst 2","specific catalyst 3"],"risks":["specific risk 1","specific risk 2"],"earningsDays":45,"macroFit":"Bullish macro regime — rate environment favorable for growth stocks","verdict":{"score":76,"label":"High Conviction","action":"EXECUTE","color":"green"}}';
+
+  var txt=await callAI(prompt,true,1800);
+  var aiData=parseJSON(txt);
+  setStep('step-sent',true);setStep('step-thesis',true);fill.style.width='85%';
+
+  // STEP 5 — build verdict
+  setStep('step-verdict',true);fill.style.width='100%';
+
+  // Remove loading card, render report
+  setTimeout(function(){
+    stepsCard.remove();
+    prog.remove();
+    renderReport(tk,S,liveQ,isOpt,premScore,sigma,G,dte,tp,K,prem,setupGrade,rr,aiData,body);
+  },400);
+}
+
+function renderReport(tk,S,liveQ,isOpt,premScore,sigma,G,dte,tp,K,prem,setupGrade,rr,ai,body){
+  body.innerHTML='';
+  var pct=liveQ?liveQ.pct:0,chg=liveQ?liveQ.chg:0;
+
+  // ── VERDICT CARD
+  var vs=ai&&ai.verdict?ai.verdict.score:premScore||65;
+  var vl=ai&&ai.verdict?ai.verdict.label:vs>=75?'High Conviction':vs>=55?'Moderate Setup':'Proceed with Caution';
+  var va=ai&&ai.verdict?ai.verdict.action:vs>=65?'EXECUTE':'REVIEW';
+  var vc=vs>=70?'#00c853':vs>=50?'#f5c842':'#ff3d57';
+  var circ=263.9,offset=(circ-circ*vs/100).toFixed(1);
+  var vCard=document.createElement('div');
+  vCard.className='verdict-card';
+  vCard.style.cssText='background:linear-gradient(135deg,'+vc+'18,'+vc+'08);border:1px solid '+vc+'40;';
+  vCard.innerHTML=
+    '<div style="font-size:11px;font-weight:700;color:'+vc+';text-transform:uppercase;letter-spacing:1px;margin-bottom:14px">Pre-Trade Report — '+tk+'</div>'+
+    '<div class="verdict-ring"><svg viewBox="0 0 100 100" width="110" height="110"><circle cx="50" cy="50" r="42" stroke="rgba(255,255,255,.08)" stroke-width="9" fill="none"/><circle cx="50" cy="50" r="42" stroke="'+vc+'" stroke-width="9" fill="none" stroke-dasharray="'+circ+'" stroke-dashoffset="'+offset+'" stroke-linecap="round"/></svg><div class="verdict-num" style="color:'+vc+'">'+vs+'</div></div>'+
+    '<div class="verdict-label" style="color:'+vc+'">'+vl.toUpperCase()+'</div>'+
+    '<div class="verdict-action" style="color:'+vc+'">'+va+'</div>'+
+    '<div style="font-size:12px;color:var(--t3);margin-top:10px">$'+(S?S.toFixed(2):'—')+' <span class="'+(pct>=0?'up':'dn')+'">'+(pct>=0?'▲ +':'▼ ')+Math.abs(pct).toFixed(2)+'%</span>'+(ai&&ai.company?' · '+ai.company:'')+'</div>';
+  body.appendChild(vCard);
+
+  // ── SCORE GRID
+  var sent=ai&&ai.sentiment?ai.sentiment:{score:65,direction:'Bullish',bull:60,neut:28,bear:12};
+  var scoreGrid=document.createElement('div');scoreGrid.className='m2';
+  scoreGrid.innerHTML=
+    '<div class="mb"><div class="ml">Sentiment</div><div class="mv" style="color:var(--b)">'+sent.score+'</div><div class="ms '+(sent.score>=60?'up':sent.score>=40?'':'dn')+'">'+sent.direction+'</div></div>'+
+    (isOpt&&premScore!==null?'<div class="mb"><div class="ml">Premium Score</div><div class="mv" style="color:'+(premScore>=65?'var(--g)':premScore>=45?'var(--go)':'var(--r)')+'">'+premScore+'</div><div class="ms">'+(premScore>=65?'Worth It':premScore>=45?'Borderline':'Overpriced')+'</div></div>':'')+
+    (!isOpt&&setupGrade?'<div class="mb"><div class="ml">Setup Grade</div><div class="mv" style="color:'+(setupGrade==='A'||setupGrade==='B+'?'var(--g)':setupGrade==='C'?'var(--go)':'var(--r)')+'">'+setupGrade+'</div><div class="ms">R:R '+(rr?rr.toFixed(2):'—')+'x</div></div>':'')+
+    (isOpt&&sigma?'<div class="mb"><div class="ml">Implied Vol</div><div class="mv" style="color:var(--b)">'+(sigma*100).toFixed(1)+'%</div><div class="ms">'+(sigma<.35?'Below avg':sigma<.55?'Above avg':'Elevated IV')+'</div></div>':'')+
+    '<div class="mb"><div class="ml">BB Consensus</div><div class="mv up">'+(ai&&ai.bbConsensus?ai.bbConsensus.buy+' Buy':'—')+'</div><div class="ms">'+(ai&&ai.bbConsensus?'Avg PT $'+ai.bbConsensus.avgPT:'—')+'</div></div>'+
+    '<div class="mb"><div class="ml">Earnings</div><div class="mv" style="color:var(--go)">'+(ai&&ai.earningsDays?ai.earningsDays+'d':'—')+'</div><div class="ms">'+(ai&&ai.earningsDays&&ai.earningsDays<21?'IV elevated':'Normal')+'</div></div>';
+  body.appendChild(scoreGrid);
+
+  // ── THESIS
+  if(ai&&ai.thesis){
+    var tBox=document.createElement('div');tBox.className='thesis-box';
+    tBox.innerHTML='<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><div style="font-size:18px">🏦</div><div style="font-size:13px;font-weight:700;color:var(--b)">AI Trade Thesis</div></div><p>'+ai.thesis+'</p>';
+    body.appendChild(tBox);
+  }
+
+  // ── CATALYSTS + RISKS
+  if(ai&&(ai.catalysts||ai.risks)){
+    var crCard=document.createElement('div');crCard.className='card';
+    var html='';
+    if(ai.catalysts&&ai.catalysts.length){
+      html+='<div style="font-size:11px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">✦ Catalysts</div>';
+      ai.catalysts.forEach(function(c){html+='<div class="flag-item"><div class="flag-dot" style="background:var(--g)"></div><span>'+c+'</span></div>';});
+    }
+    if(ai.risks&&ai.risks.length){
+      html+='<div style="font-size:11px;font-weight:700;color:var(--r);text-transform:uppercase;letter-spacing:.7px;margin:'+(ai.catalysts?'14px':'0')+'px 0 8px">⚠ Risk Flags</div>';
+      ai.risks.forEach(function(r){html+='<div class="flag-item"><div class="flag-dot" style="background:var(--r)"></div><span>'+r+'</span></div>';});
+    }
+    crCard.innerHTML=html;
+    body.appendChild(crCard);
+  }
+
+  // ── MACRO FIT
+  if(ai&&ai.macroFit){
+    var mBox=document.createElement('div');
+    mBox.className='wb';
+    mBox.innerHTML='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--go)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><p>'+ai.macroFit+'</p>';
+    body.appendChild(mBox);
+  }
+
+  // ── SENTIMENT BARS
+  var sentCard=document.createElement('div');sentCard.className='card';
+  sentCard.innerHTML='<h4>Market Sentiment Breakdown</h4>'+
+    '<div style="display:flex;flex-direction:column;gap:8px">'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Bull</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.bull+'%;height:100%;background:var(--g);border-radius:3px"></div></div><span class="up" style="font-size:11px;font-weight:600;width:28px;text-align:right">'+sent.bull+'%</span></div>'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Neut</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.neut+'%;height:100%;background:var(--go);border-radius:3px"></div></div><span style="font-size:11px;font-weight:600;color:var(--go);width:28px;text-align:right">'+sent.neut+'%</span></div>'+
+    '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;color:var(--t3);width:32px">Bear</span><div style="flex:1;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+sent.bear+'%;height:100%;background:var(--r);border-radius:3px"></div></div><span class="dn" style="font-size:11px;font-weight:600;width:28px;text-align:right">'+sent.bear+'%</span></div>'+
+    '</div>';
+  body.appendChild(sentCard);
+
+  // ── OPTIONS DETAIL (if applicable)
+  if(isOpt&&G&&sigma){
+    var optCard=document.createElement('div');optCard.className='card';
+    var be=(tp==='call'?K+prem:K-prem).toFixed(2);
+    optCard.innerHTML='<h4>Options Details</h4>'+
+      '<div class="gr"><span style="font-size:13px">Break-Even</span><span style="font-weight:700">$'+be+'</span></div>'+
+      '<div class="gr"><span style="font-size:13px">Delta</span><span style="font-weight:700">'+(G.delta>=0?'+':'')+G.delta.toFixed(3)+'</span></div>'+
+      '<div class="gr"><span style="font-size:13px">Theta / Day</span><span style="font-weight:700;color:var(--r)">-$'+(Math.abs(G.theta)*100*prem).toFixed(2)+'</span></div>'+
+      '<div class="gr" style="border:none"><span style="font-size:13px">Days to Expiry</span><span style="font-weight:700">'+dte+'d</span></div>';
+    body.appendChild(optCard);
+  }
+
+  // ── DISCLAIMER + ROBINHOOD BUTTON
+  var disc=document.createElement('div');
+  disc.style.cssText='font-size:10px;color:var(--t3);text-align:center;padding:12px 0 8px;line-height:1.6';
+  disc.textContent='For informational purposes only. Not financial advice. Always do your own research before trading.';
+  body.appendChild(disc);
+
+  var rbBtn=document.createElement('button');
+  rbBtn.className='rpt-btn';
+  rbBtn.style.cssText='background:linear-gradient(135deg,#00c853,#00a844);color:#000;margin-bottom:14px';
+  rbBtn.textContent='Open Robinhood →';
+  rbBtn.addEventListener('click',function(){window.open('https://robinhood.com','_blank');});
+  body.appendChild(rbBtn);
+}
+
+gel('rpt-back').addEventListener('click',function(){gel('rpt-overlay').classList.remove('open');});
+
+/* ── SIGNALS ── */
+gel('stk').addEventListener('input',function(){this.value=this.value.toUpperCase();});
+gel('signals-load-btn').addEventListener('click',loadSignals);
+gel('stk').addEventListener('keydown',function(e){if(e.key==='Enter')loadSignals();});
+['st-ov','st-news','st-x','st-ana'].forEach(function(id){gel(id).addEventListener('click',function(){document.querySelectorAll('#screen-sentiment .tab').forEach(function(b){b.classList.remove('active');});this.classList.add('active');var map={'st-ov':'sent-ov','st-news':'sent-news','st-x':'sent-x','st-ana':'sent-ana'};Object.keys(map).forEach(function(k){var e=gel(map[k]);if(e)e.style.display=k===id?'block':'none';});});});
+async function loadSignals(){var raw=gel('stk').value.trim();if(!raw)return;var st=gel('sst');st.innerHTML='<span class="spin"></span>Loading signals for '+raw+'...';var prompt='Search for current real-time information about the stock ticker or company "'+raw+'". Return ONLY valid JSON (no markdown, no code blocks): {"ticker":"AAPL","company":"Apple Inc.","price":189.30,"change":2.6,"pct":1.4,"score":72,"direction":"Bullish","bull":68,"neut":22,"bear":10,"earningsDays":45,"analystPT":210,"ptUpside":10.9,"headlines":[{"text":"headline text","source":"Reuters","time":"2h ago","sentiment":"bullish"},{"text":"headline","source":"Bloomberg","time":"4h ago","sentiment":"neutral"},{"text":"headline","source":"FT","time":"6h ago","sentiment":"bearish"},{"text":"headline","source":"WSJ","time":"8h ago","sentiment":"bullish"}],"analysts":[{"firm":"Goldman Sachs","rating":"Buy","action":"Upgrade","pt":220,"upside":16.2},{"firm":"Morgan Stanley","rating":"Overweight","action":"Maintain","pt":210,"upside":10.9},{"firm":"JP Morgan","rating":"Neutral","action":"Maintain","pt":185,"upside":-2.3},{"firm":"Bank of America","rating":"Buy","action":"Maintain","pt":225,"upside":18.9},{"firm":"Citigroup","rating":"Neutral","action":"Maintain","pt":180,"upside":-4.9},{"firm":"UBS","rating":"Buy","action":"Upgrade","pt":215,"upside":13.5}],"xPosts":[{"name":"The Kobeissi Letter","handle":"@KobeissiLetter","role":"Institutional Macro","initials":"KL","color":"#38c8ff","body":"relevant commentary about this specific stock","sentiment":"bullish","likes":"8.4K","rt":"2.1K"},{"name":"Bill Ackman","handle":"@BillAckman","role":"Hedge Fund Pershing Square","initials":"BA","color":"#00c853","body":"relevant commentary","sentiment":"bullish","likes":"14K","rt":"3.8K"},{"name":"Chamath Palihapitiya","handle":"@chamath","role":"VC Social Capital","initials":"CP","color":"#b44dff","body":"relevant commentary","sentiment":"neutral","likes":"22K","rt":"5.2K"},{"name":"Raoul Pal","handle":"@RaoulGMI","role":"Macro Investor GMI","initials":"RP","color":"#f5c842","body":"relevant commentary","sentiment":"bullish","likes":"9.7K","rt":"2.9K"}]}';var txt=await callAI(prompt,true,2500);var d=parseJSON(txt);if(d){st.innerHTML='<span style="color:var(--g)">&#10003; Live signals loaded for '+(d.ticker||raw.toUpperCase())+(d.company?' — '+d.company:'')+'</span>';renderSignals(d);}else{st.innerHTML='<span style="color:var(--r)">&#10007; Could not load signals — check your /api/ai endpoint is running</span>';}}
+function renderSignals(d){var tk=d.ticker||'—';var ov=gel('sent-ov');ov.innerHTML='';var ovCard=document.createElement('div');ovCard.className='card';var sc=d.score||0,dir=(d.direction||'').toUpperCase();var dirPill='pg';if(sc<60)dirPill='pgo';if(sc<40)dirPill='pr';ovCard.innerHTML='<h4>Live Sentiment — '+tk+'</h4>';var inner=document.createElement('div');inner.style.cssText='display:flex;gap:10px';inner.innerHTML='<div style="flex:1;background:var(--gd);border-radius:var(--rs);padding:14px;text-align:center"><div style="font-size:26px;font-weight:800;color:var(--g)">'+sc+'</div><div style="font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-top:2px">Score</div><div class="pill '+dirPill+'" style="margin-top:6px">'+dir+'</div></div>'+'<div style="flex:2;display:flex;flex-direction:column;gap:7px;justify-content:center">'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.bull||0)+'%;height:100%;background:var(--g);border-radius:3px"></div></div><span class="up" style="font-size:11px;font-weight:600;min-width:30px">'+(d.bull||0)+'%</span><span style="font-size:10px;color:var(--t3)">Bull</span></div>'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.neut||0)+'%;height:100%;background:var(--go);border-radius:3px"></div></div><span style="font-size:11px;font-weight:600;color:var(--go);min-width:30px">'+(d.neut||0)+'%</span><span style="font-size:10px;color:var(--t3)">Neut</span></div>'+'<div style="display:flex;align-items:center;gap:7px"><div style="flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="width:'+(d.bear||0)+'%;height:100%;background:var(--r);border-radius:3px"></div></div><span class="dn" style="font-size:11px;font-weight:600;min-width:30px">'+(d.bear||0)+'%</span><span style="font-size:10px;color:var(--t3)">Bear</span></div>'+'</div>';ovCard.appendChild(inner);var m2=document.createElement('div');m2.className='m2';m2.style.marginTop='11px';m2.innerHTML='<div class="mb"><div class="ml">News</div><div class="mv '+(sc>=60?'up':'dn')+'">'+(d.direction||'—')+'</div><div class="ms">'+(d.headlines?d.headlines.length:0)+' headlines</div></div>'+'<div class="mb"><div class="ml">X/Twitter</div><div class="mv '+(sc>=60?'up':'')+'">'+( d.xPosts&&d.xPosts.length?'Active':'—')+'</div><div class="ms">Pro traders</div></div>'+'<div class="mb"><div class="ml">Avg PT</div><div class="mv">$'+(d.analystPT||'—')+'</div><div class="ms '+((d.ptUpside||0)>=0?'up':'dn')+'">'+(( d.ptUpside||0)>=0?'+':'')+(d.ptUpside||0)+'%</div></div>'+'<div class="mb"><div class="ml">Earnings</div><div class="mv" style="color:var(--go)">'+(d.earningsDays?d.earningsDays+'d':'—')+'</div><div class="ms">'+((d.earningsDays||99)<21?'IV elevated':'Normal')+'</div></div>';ovCard.appendChild(m2);ov.appendChild(ovCard);var nw=gel('sent-news');nw.innerHTML='';var nCard=document.createElement('div');nCard.className='card';nCard.innerHTML='<h4>Headlines — '+tk+'</h4>';(d.headlines||[]).forEach(function(h){var dc=h.sentiment==='bullish'?'var(--g)':h.sentiment==='bearish'?'var(--r)':'var(--go)';var pc=h.sentiment==='bullish'?'pg':h.sentiment==='bearish'?'pr':'pgo';var item=document.createElement('div');item.className='ni';item.innerHTML='<div class="nd" style="background:'+dc+'"></div><div><div style="font-size:13px;line-height:1.5;color:var(--t2)">'+h.text+'</div><div style="font-size:10px;color:var(--t3);margin-top:3px">'+h.source+' '+h.time+'</div><span class="pill '+pc+'" style="margin-top:4px">'+(h.sentiment||'').toUpperCase()+'</span></div>';nCard.appendChild(item);});nw.appendChild(nCard);var xw=gel('sent-x');xw.innerHTML='';var xHdr=document.createElement('div');xHdr.style.cssText='background:var(--bg3);border:1px solid var(--bd);border-radius:var(--rs);padding:10px 13px;margin-bottom:13px;font-size:11px;color:var(--t3)';xHdr.textContent='Verified institutional investors and professional traders only';xw.appendChild(xHdr);(d.xPosts||[]).forEach(function(x){var sc2=x.sentiment==='bullish'?'pg':x.sentiment==='bearish'?'pr':'pgo';var xp=document.createElement('div');xp.className='xp';xp.innerHTML='<div style="display:flex;align-items:center;gap:9px;margin-bottom:10px"><div class="xa" style="background:'+x.color+'22;color:'+x.color+'">'+x.initials+'</div><div style="flex:1"><div style="display:flex;align-items:center"><span style="font-size:13px;font-weight:700">'+x.name+'</span><div class="xv">&#10003;</div></div><div style="font-size:11px;color:var(--t3)">'+x.handle+' — '+x.role+'</div></div><span class="pill '+sc2+'" style="font-size:9px">'+(x.sentiment||'').toUpperCase()+'</span></div><div style="font-size:13px;line-height:1.6;color:var(--t2);margin-bottom:9px">'+x.body+'</div><div style="display:flex;gap:13px"><span style="font-size:11px;color:var(--t3)">'+x.likes+' likes</span><span style="font-size:11px;color:var(--t3)">'+x.rt+' retweets</span></div>';xw.appendChild(xp);});var xFoot=document.createElement('div');xFoot.style.cssText='text-align:center;font-size:10px;color:var(--t3);padding:4px 0 8px';xFoot.textContent='For market context only. Not affiliated with these individuals.';xw.appendChild(xFoot);var aw=gel('sent-ana');aw.innerHTML='';var aCard=document.createElement('div');aCard.className='card';aCard.innerHTML='<h4>Analyst Ratings — '+tk+'</h4>';(d.analysts||[]).forEach(function(a){var up2=a.upside>=0;var rc=(a.rating==='Buy'||a.rating==='Overweight')?'var(--g)':(a.rating==='Sell'||a.rating==='Underweight')?'var(--r)':'var(--go)';var sh=a.firm.indexOf('Goldman')>=0?'GS':a.firm.indexOf('Morgan Stanley')>=0?'MS':a.firm.indexOf('JP')>=0?'JPM':a.firm.indexOf('Bank')>=0?'BAC':a.firm.indexOf('Citi')>=0?'CITI':'UBS';var row=document.createElement('div');row.className='br';row.innerHTML='<div style="display:flex;align-items:center;gap:9px"><div class="bl" style="background:var(--bd3);color:var(--b)">'+sh+'</div><div><div style="font-size:13px;font-weight:700">'+a.firm+'</div><div style="font-size:11px;color:'+rc+'">'+a.action+' — '+a.rating+'</div></div></div><div style="text-align:right"><div style="font-size:17px;font-weight:800;color:'+(up2?'var(--g)':'var(--r)')+'">$'+a.pt+'</div><div style="font-size:11px;color:'+(up2?'var(--g)':'var(--r)')+'">'+(up2?'+':'')+(a.upside||0).toFixed(1)+'%</div></div>';aCard.appendChild(row);});aw.appendChild(aCard);}
+
+/* ── MEDIA ── */
+function openURL(url){window.open(url,'_blank');}
+[['bb-open','https://www.bloomberg.com/live-tv'],['bb-btn','https://www.bloomberg.com/live-tv'],['cnbc-open','https://www.cnbc.com/live-tv/'],['cnbc-btn','https://www.cnbc.com/live-tv/'],['yf-open','https://finance.yahoo.com/live/'],['yf-btn','https://finance.yahoo.com/live/'],['mw-btn','https://www.marketwatch.com'],['sa-btn','https://seekingalpha.com'],['uw-btn','https://unusualwhales.com'],['bz-btn','https://www.benzinga.com'],['fv-btn','https://finviz.com'],['ba-btn','https://www.barrons.com'],['tv-btn','https://www.tradingview.com'],['os-btn','https://optionstrat.com'],['cb-btn','https://www.cboe.com'],['fred-btn','https://fred.stlouisfed.org'],['sec-btn','https://www.sec.gov/cgi-bin/browse-edgar'],['yo-btn','https://finance.yahoo.com/options']].forEach(function(pair){var e=gel(pair[0]);if(e)e.addEventListener('click',(function(url){return function(){openURL(url);};})(pair[1]));});
+['mt-live','mt-charts','mt-news','mt-tools'].forEach(function(id){gel(id).addEventListener('click',function(){document.querySelectorAll('#screen-media .tab').forEach(function(b){b.classList.remove('active');});this.classList.add('active');var map={'mt-live':'m-live','mt-charts':'m-charts','mt-news':'m-news','mt-tools':'m-tools'};Object.keys(map).forEach(function(k){var e=gel(map[k]);if(e)e.style.display=k===id?'block':'none';});});});
+
+/* ── JOURNAL ── */
+gel('open-at-btn').addEventListener('click',openAT);gel('log-first-btn').addEventListener('click',openAT);gel('jt-save-btn').addEventListener('click',saveJTrade);gel('jt-cancel-btn').addEventListener('click',function(){gel('atm').classList.add('hidden');});gel('jt-opt-btn').addEventListener('click',function(){setJtType('option',this);});gel('jt-stk-btn').addEventListener('click',function(){setJtType('stock',this);});gel('ai-recs-btn').addEventListener('click',getAIRecs);gel('clear-j-btn').addEventListener('click',function(){if(confirm('Clear all journal trades?')){journal=[];sv('sfx_journal',[]);renderJournal();}});gel('jt-tk').addEventListener('input',function(){this.value=this.value.toUpperCase();});
+function openAT(){gel('atm').classList.remove('hidden');gel('jt-date').value=new Date().toISOString().split('T')[0];}
+function setJtType(tp,btn){jtType=tp;document.querySelectorAll('#jt-seg .sb').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');gel('jt-of').style.display=tp==='option'?'block':'none';gel('jt-sf').style.display=tp==='stock'?'block':'none';}
+function saveJTrade(){var tk=(gel('jt-tk').value||'').trim().toUpperCase();if(!tk)return;var dir=gel('jt-dir').value,date=gel('jt-date').value,en,ex,qty,pnl,ret,be;if(jtType==='option'){en=parseFloat(gel('jt-en').value)||0;ex=parseFloat(gel('jt-ex').value)||0;qty=parseInt(gel('jt-qty').value)||1;var str=parseFloat(gel('jt-str').value)||0;pnl=(ex-en)*100*qty;ret=en>0?(ex-en)/en*100:0;be=dir==='Call'?str+en:str-en;}else{en=parseFloat(gel('jts-en').value)||0;ex=parseFloat(gel('jts-ex').value)||0;qty=parseInt(gel('jts-qty').value)||0;pnl=(ex-en)*qty;ret=en>0?(ex-en)/en*100:0;be=en;}journal.push({id:Date.now(),date:date,ticker:tk,direction:dir,assetClass:jtType,entry:en,exit:ex,qty:qty,pnl:parseFloat(pnl.toFixed(2)),retPct:parseFloat(ret.toFixed(2)),breakeven:parseFloat(be.toFixed(2)),notes:gel('jt-notes').value.trim(),status:ex>0?'closed':'open'});sv('sfx_journal',journal);renderJournal();gel('atm').classList.add('hidden');['jt-tk','jt-en','jt-ex','jt-str','jts-en','jts-ex','jts-qty','jt-notes'].forEach(function(id){var e=gel(id);if(e)e.value='';});gel('jt-qty').value='1';}
+function renderJournal(){var has=journal.length>0;gel('j-empty').style.display=has?'none':'block';gel('j-stats').style.display=has?'grid':'none';gel('jchart').style.display=has?'block':'none';gel('jai-wrap').style.display=has?'block':'none';gel('j-tt').style.display=has?'block':'none';gel('j-trades').innerHTML='';if(!has)return;var closed=journal.filter(function(t){return t.status==='closed';});var wr=closed.length?Math.round(closed.filter(function(t){return t.pnl>0;}).length/closed.length*100):0;var tot=journal.reduce(function(s,t){return s+t.pnl;},0);var jwrE=gel('jwr');if(jwrE){jwrE.textContent=wr+'%';jwrE.className=wr>=50?'up':'dn';}var jpE=gel('jpnl');if(jpE){jpE.textContent=(tot>=0?'+$':'-$')+Math.abs(tot).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});jpE.className=tot>=0?'up':'dn';}setText('jcnt',journal.length);drawChart(journal,tot);var frag=document.createDocumentFragment();journal.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);}).forEach(function(t){var up2=t.pnl>=0,pc=t.assetClass==='option'?(t.direction==='Call'?'pb':'pr'):(t.direction==='Long'?'pg':'pr');var el=document.createElement('div');el.className='ti';el.innerHTML='<div style="display:flex;justify-content:space-between;margin-bottom:10px"><div><div style="font-size:16px;font-weight:800">'+t.ticker+' <span class="pill '+pc+'">'+t.direction+'</span></div><div style="font-size:10px;color:var(--t3);margin-top:2px">'+(t.assetClass==='option'?'BE $'+t.breakeven+' — ':'')+t.date+'</div></div><div style="text-align:right"><div class="'+(up2?'up':'dn')+'" style="font-size:18px;font-weight:800">'+(up2?'+$':'-$')+Math.abs(t.pnl).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</div><div style="font-size:10px;color:var(--t3);margin-top:2px">'+t.status+'</div></div></div><div class="tst"><div class="tsi">Entry<span>$'+t.entry+'</span></div><div class="tsi">Exit<span>'+(t.exit?'$'+t.exit:'Open')+'</span></div><div class="tsi">Qty<span>'+t.qty+'</span></div><div class="tsi">Return<span class="'+(up2?'up':'dn')+'">'+(up2?'+':'')+t.retPct.toFixed(1)+'%</span></div></div>'+(t.notes?'<div style="font-size:11px;color:var(--t3);margin-top:8px;padding-top:8px;border-top:1px solid var(--bd)">'+t.notes+'</div>':'');frag.appendChild(el);});gel('j-trades').appendChild(frag);}
+function drawChart(trades,tot){var svg=gel('jsvg');if(!svg)return;var jcv=gel('jcv');if(jcv){jcv.textContent=(tot>=0?'+$':'-$')+Math.abs(tot).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});jcv.className=tot>=0?'up':'dn';}var sorted=trades.slice().sort(function(a,b){return new Date(a.date)-new Date(b.date);}),cum=0;var pts=[0].concat(sorted.map(function(t){cum+=t.pnl;return cum;}));var mn=Math.min.apply(null,pts),mx=Math.max.apply(null,pts),rng=mx-mn||1;var px=function(i){return i/(pts.length-1||1)*360+20;},py=function(v){return 170-20-(v-mn)/rng*130;};var poly=pts.map(function(v,i){return px(i)+','+py(v);}).join(' '),col=tot>=0?'#00c853':'#ff3d57';svg.innerHTML='<defs><linearGradient id="cg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="'+col+'" stop-opacity=".28"/><stop offset="100%" stop-color="'+col+'" stop-opacity="0"/></linearGradient></defs><polyline points="'+poly+'" stroke="'+col+'" stroke-width="2" fill="none"/><polygon points="'+poly+' '+px(pts.length-1)+',170 '+px(0)+',170" fill="url(#cg)"/>';}
+async function getAIRecs(){if(journal.length<2){alert('Log at least 2 trades to get AI coaching.');return;}var btn=gel('ai-recs-btn');if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span>Analyzing...';}var closed=journal.filter(function(t){return t.status==='closed';});var wr=closed.length?Math.round(closed.filter(function(t){return t.pnl>0;}).length/closed.length*100):0;var summary={trades:journal.length,winRate:wr,totalPnl:journal.reduce(function(s,t){return s+t.pnl;},0),recentTrades:closed.slice(-10).map(function(t){return{ticker:t.ticker,direction:t.direction,pnl:t.pnl,ret:t.retPct};})};var prompt='You are a professional trading coach. Analyze this journal and give specific actionable coaching. Account: $'+(user.accountSize||'unknown')+', Risk: '+(user.riskPct||2)+'% per trade. Journal: '+JSON.stringify(summary)+'. Return ONLY this JSON with no markdown: {"summary":"1-sentence assessment","recommendations":[{"title":"action title","detail":"specific advice","priority":"high"},{"title":"title","detail":"advice","priority":"medium"},{"title":"title","detail":"advice","priority":"low"}]}';var raw=await callAI(prompt,false,1000);var d=parseJSON(raw);var pC={high:'var(--r)',medium:'var(--go)',low:'var(--g)'};if(d){gel('jai').innerHTML='<p style="font-size:13px;color:var(--t2);margin-bottom:12px;line-height:1.5">'+(d.summary||'')+'</p>'+(d.recommendations||[]).map(function(r){return'<div class="ai-rec"><div class="art" style="color:'+(pC[r.priority]||'var(--b)')+'">'+r.title+' <span style="font-size:9px;opacity:.7;text-transform:uppercase;letter-spacing:.5px">'+r.priority+'</span></div><div class="ard">'+r.detail+'</div></div>';}).join('')+'<button class="abtn" style="background:var(--b);font-size:12px;padding:10px;margin-top:10px" id="ai-refresh-btn">Refresh Analysis</button>';var rb=gel('ai-refresh-btn');if(rb)rb.addEventListener('click',getAIRecs);}else{gel('jai').innerHTML='<p style="color:var(--r);font-size:13px">Could not generate analysis.</p><button class="abtn" style="background:var(--b);font-size:13px;padding:11px;margin-top:8px" id="ai-retry-btn">Retry</button>';var rt=gel('ai-retry-btn');if(rt)rt.addEventListener('click',getAIRecs);}}
+
+/* ── INIT ── */
+(function(){
+  var u=ld('sfx_user',null);if(u&&u.name)user=u;
+  applyUser();
+  var t=ld('sfx_theme','dark');applyTheme(t);highlightThBtn(t);
+  journal=ld('sfx_journal',[]);
+  watchlist=ld('sfx_watchlist',['AAPL','PLTR','NVDA','SPY']);
+  renderWatchlist(null);renderJournal();populateExpiries();loadPrices();
+  setInterval(loadPrices,90000);
+})();
+})();
+</script>
+</body>
+</html>
++(gel('sl-in').value||'?')+'\n- R:R ratio: '+(rr?rr.toFixed(2):'?')+'x | Setup grade: '+(setupGrade||'?')+'\nBE STRICT: R:R below 1.5 is a poor setup. Score honestly.';
 
   var prompt='You are a Goldman Sachs senior analyst. Search for current information about "'+tk+'" and generate a comprehensive pre-trade report. Current price: $'+(S?S.toFixed(2):'unknown')+'. '+tradeCtx+'. Return ONLY valid JSON, no markdown: {"company":"Full Company Name","price":'+(S||0)+',"change":'+(liveQ?liveQ.chg:0)+',"pct":'+(liveQ?liveQ.pct:0)+',"sentiment":{"score":72,"direction":"Bullish","bull":65,"neut":25,"bear":10},"bbConsensus":{"buy":4,"neutral":1,"sell":0,"avgPT":210,"upside":12.5},"thesis":"Write a 3-sentence Goldman Sachs style institutional trade thesis here. Be specific to the company and current market conditions.","catalysts":["specific catalyst 1","specific catalyst 2","specific catalyst 3"],"risks":["specific risk 1","specific risk 2"],"earningsDays":45,"macroFit":"Bullish macro regime — rate environment favorable for growth stocks","verdict":{"score":76,"label":"High Conviction","action":"EXECUTE","color":"green"}}';
 
