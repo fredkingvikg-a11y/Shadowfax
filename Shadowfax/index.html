@@ -581,7 +581,6 @@ async function callAI(prompt, useSearch, maxTok) {
         messages: [{ role: 'user', content: prompt }],
         max_tokens: maxTok || 800
       }),
-      signal: AbortSignal.timeout(30000)
     });
     if (r.ok) {
       var d = await r.json();
