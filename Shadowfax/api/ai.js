@@ -58,24 +58,29 @@ function callOpenRouter(messages, maxTokens, apiKey) {
         'Content-Length': Buffer.byteLength(payload)
       }
     }, function(res) {
-      var data = '';
-      res.on('data', function(c) { data += c; });
+      var chunks = [];
+      res.on('data', function(chunk) { chunks.push(chunk); });
       res.on('end', function() {
         try {
+          var data = Buffer.concat(chunks).toString('utf8');
           var p = JSON.parse(data);
-          var text = p.choices && p.choices[0] && p.choices[0].message &&
-                     p.choices[0].message.content ? p.choices[0].message.content.trim() : '';
-          /* Try to extract JSON even from truncated response */
-          if (text) {
-            var lastBrace = text.lastIndexOf('}');
-            if (lastBrace > 0) text = text.substring(0, lastBrace + 1);
+          var text = '';
+          if (p.choices && p.choices[0]) {
+            var choice = p.choices[0];
+            if (choice.message && choice.message.content) {
+              text = choice.message.content.trim();
+            } else if (choice.text) {
+              text = choice.text.trim();
+            }
           }
           if (!text) {
-            resolve({ ok: false, error: 'empty response: ' + JSON.stringify(p).substring(0, 200) });
+            resolve({ ok: false, error: 'no text. finish_reason: ' + (p.choices && p.choices[0] && p.choices[0].finish_reason) + ' model: ' + p.model });
           } else {
             resolve({ ok: true, text: text });
           }
-        } catch(e) { resolve({ ok: false, error: e.message }); }
+        } catch(e) {
+          resolve({ ok: false, error: 'parse error: ' + e.message });
+        }
       });
     });
     req.on('error', function(e) { resolve({ ok: false, error: e.message }); });
