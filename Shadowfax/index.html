@@ -643,7 +643,7 @@ function openReport(){
   });
   body.appendChild(stepsCard);
   gel('rpt-overlay').classList.add('open');
-  runReport(tk,body,fill,stepsCard,steps);
+  runReport(tk,body,fill,stepsCard,steps,prog);
 }
 
 function setStep(id,done,err){
@@ -653,7 +653,7 @@ function setStep(id,done,err){
   else if(done){icon.innerHTML='✓';icon.style.background='var(--gd)';icon.style.color='var(--g)';}
 }
 
-async function runReport(tk,body,fill,stepsCard,steps){
+async function runReport(tk,body,fill,stepsCard,steps,prog){
   var isOpt=gel('asset-opt-btn').classList.contains('active');
   var S=parseFloat(gel('spx-in').value)||0;
   var K=parseFloat(gel('sk-in').value)||0;
