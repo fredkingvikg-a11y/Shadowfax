@@ -8,9 +8,8 @@ module.exports = async function(req, res) {
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
   if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return; }
 
-  /* Key lives securely on the server — never sent to browser */
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) { res.status(500).json({ error: 'API key not configured on server' }); return; }
+  if (!apiKey) { res.status(500).json({ error: 'GEMINI_API_KEY not set on server' }); return; }
 
   let body = req.body;
   if (typeof body === 'string') {
@@ -21,19 +20,26 @@ module.exports = async function(req, res) {
   const userMessage = messages.map(function(m) {
     return typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
   }).join('\n');
-  const maxTokens = (body && body.max_tokens) ? parseInt(body.max_tokens) : 1500;
-  
+
   if (!userMessage || !userMessage.trim()) {
     res.status(400).json({ error: 'Empty message' });
     return;
   }
 
+  const maxTokens = (body && body.max_tokens) ? parseInt(body.max_tokens) : 1500;
+
   const geminiPayload = JSON.stringify({
-    contents: [{ parts: [{ text: userMessage }] }],
-    generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 }
+    contents: [{
+      role: 'user',
+      parts: [{ text: userMessage }]
+    }],
+    generationConfig: {
+      maxOutputTokens: maxTokens,
+      temperature: 0.7
+    }
   });
 
-  const path = '/v1beta/models/gemini-1.5-flash-8b:generateContent?key=' + apiKey;
+  const path = '/v1beta/models/gemini-1.5-flash:generateContent?key=' + apiKey;
 
   return new Promise(function(resolve) {
     const reqHttp = https.request({
@@ -50,22 +56,42 @@ module.exports = async function(req, res) {
       response.on('end', function() {
         try {
           var parsed = JSON.parse(data);
-          var text = parsed.candidates &&
-                     parsed.candidates[0] &&
-                     parsed.candidates[0].content &&
-                     parsed.candidates[0].content.parts &&
-                     parsed.candidates[0].content.parts[0] &&
-                     parsed.candidates[0].content.parts[0].text
-                     ? parsed.candidates[0].content.parts[0].text : '';
-          res.status(200).json({ content: [{ type: 'text', text: text }] });
+
+          /* Extract text from Gemini response */
+          var text = '';
+          if (parsed.candidates && parsed.candidates[0]) {
+            var candidate = parsed.candidates[0];
+            if (candidate.content && candidate.content.parts && candidate.content.parts[0]) {
+              text = candidate.content.parts[0].text || '';
+            }
+          }
+
+          /* Return raw Gemini response in debug field too */
+          if (!text) {
+            res.status(200).json({
+              content: [{ type: 'text', text: '' }],
+              debug: parsed
+            });
+          } else {
+            res.status(200).json({
+              content: [{ type: 'text', text: text }]
+            });
+          }
         } catch(e) {
-          res.status(500).json({ error: 'Parse error', raw: data.substring(0, 200) });
+          res.status(500).json({ error: 'Parse error: ' + e.message, raw: data.substring(0, 500) });
         }
         resolve();
       });
     });
-    reqHttp.on('error', function(err) { res.status(500).json({ error: err.message }); resolve(); });
-    reqHttp.setTimeout(30000, function() { reqHttp.destroy(); res.status(504).json({ error: 'Timeout' }); resolve(); });
+    reqHttp.on('error', function(err) {
+      res.status(500).json({ error: err.message });
+      resolve();
+    });
+    reqHttp.setTimeout(25000, function() {
+      reqHttp.destroy();
+      res.status(504).json({ error: 'Timeout calling Gemini' });
+      resolve();
+    });
     reqHttp.write(geminiPayload);
     reqHttp.end();
   });
