@@ -659,20 +659,79 @@ function removeWL(tk){watchlist=watchlist.filter(function(t){return t!==tk;});sv
 /* MACRO REGIME */
 gel('macro-load-btn').addEventListener('click',loadMacroRegime);
 async function loadMacroRegime(){
-  var btn=gel('macro-load-btn');btn.innerHTML='<span class="spin" style="width:10px;height:10px;margin:0;margin-right:4px"></span>';
-  var wrap=gel('macro-wrap');wrap.innerHTML='<div class="card" style="text-align:center;padding:18px"><span class="spin"></span> Analyzing macro environment...</div>';
-  var prompt='Search for current macroeconomic conditions: Fed policy, interest rates, inflation data, VIX level, stock market trend. Return ONLY valid JSON no markdown: {"regime":"Risk-On Growth","color":"green","summary":"Brief current macro summary","rateEnv":"Stable","inflationEnv":"Moderating","vixLevel":"Low","riskAppetite":"High","favorStrategies":["Long calls on growth","Bull call spreads","Momentum longs"],"avoidStrategies":["Short volatility blindly","Deep OTM puts"],"drivers":["Driver 1","Driver 2","Driver 3"],"regimeLabel":"RISK-ON"}';
-  var txt=await callAI(prompt,true,1200);
-  var d=parseJSON(txt);
-  btn.textContent='Refresh';
-  if(!d){wrap.innerHTML='<div class="card" style="text-align:center;padding:18px;color:var(--r)">Could not load macro data</div>';return;}
+  var btn=gel('macro-load-btn');
+  btn.innerHTML='<span class="spin" style="width:10px;height:10px;margin:0;margin-right:4px"></span>';
+  var wrap=gel('macro-wrap');
+  wrap.innerHTML='<div class="card" style="text-align:center;padding:18px"><span class="spin"></span> Fetching live macro data from FRED + Yahoo...</div>';
+  try{
+    var r=await fetch('/api/macro',{signal:AbortSignal.timeout(15000)});
+    btn.textContent='Refresh';
+    if(!r.ok){throw new Error('API error');}
+    var d=await r.json();
+    if(d.error){throw new Error(d.error);}
+    renderMacro(d,wrap);
+  }catch(e){
+    btn.textContent='Retry';
+    wrap.innerHTML='<div class="card" style="text-align:center;padding:18px;color:var(--r)">Could not load macro data. Check FRED_API_KEY is set in Vercel.</div>';
+  }
+}
+
+function renderMacro(d,wrap){
   var col=d.color==='green'?'var(--g)':d.color==='red'?'var(--r)':'var(--go)';
   var bg=d.color==='green'?'var(--gd)':d.color==='red'?'var(--rd)':'var(--god)';
-  var html='<div class="card" style="padding:18px;margin-bottom:9px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div><div style="font-size:16px;font-weight:800;color:'+col+'">'+(d.regime||'Unknown')+'</div><div style="font-size:11px;color:var(--t3);margin-top:2px">'+(d.summary||'')+'</div></div><div style="background:'+bg+';color:'+col+';padding:6px 11px;border-radius:20px;font-size:11px;font-weight:700">'+(d.regimeLabel||'--')+'</div></div><div class="m2" style="margin-bottom:0"><div class="mb"><div class="ml">Rates</div><div class="mv" style="font-size:14px;color:var(--b)">'+(d.rateEnv||'--')+'</div></div><div class="mb"><div class="ml">Inflation</div><div class="mv" style="font-size:14px;color:var(--b)">'+(d.inflationEnv||'--')+'</div></div><div class="mb"><div class="ml">VIX</div><div class="mv" style="font-size:14px;color:var(--b)">'+(d.vixLevel||'--')+'</div></div><div class="mb"><div class="ml">Risk Appetite</div><div class="mv" style="font-size:14px;color:'+col+'">'+(d.riskAppetite||'--')+'</div></div></div></div>';
-  if(d.drivers&&d.drivers.length){html+='<div class="card" style="margin-bottom:9px"><div style="font-size:11px;font-weight:700;color:var(--b);text-transform:uppercase;letter-spacing:.7px;margin-bottom:9px">Key Drivers</div>';d.drivers.forEach(function(dr){html+='<div class="flag-item"><div class="flag-dot" style="background:var(--b)"></div><span>'+dr+'</span></div>';});html+='</div>';}
+  var sigCol={bullish:'var(--g)',neutral:'var(--go)',caution:'var(--go)',bearish:'var(--r)'};
+
+  /* Header card */
+  var html='<div class="card" style="padding:18px;margin-bottom:9px">';
+  html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">';
+  html+='<div style="font-size:17px;font-weight:800;color:'+col+'">'+d.regime+'</div>';
+  html+='<div style="background:'+bg+';color:'+col+';padding:6px 11px;border-radius:20px;font-size:11px;font-weight:700">'+d.label+'</div></div>';
+  html+='<div style="font-size:11px;color:var(--t3);margin-bottom:14px;line-height:1.5">'+d.summary+'</div>';
+
+  /* Score bar */
+  html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">';
+  html+='<span style="font-size:11px;color:var(--t3)">Regime Score</span>';
+  html+='<span style="font-size:13px;font-weight:800;color:'+col+'">'+d.score+' / 100</span></div>';
+  html+='<div style="height:6px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:14px">';
+  html+='<div style="width:'+d.score+'%;height:100%;background:'+col+';border-radius:3px;transition:width .6s ease"></div></div>';
+
+  /* Key metrics grid */
+  html+='<div class="m2" style="margin-bottom:0">';
+  html+='<div class="mb"><div class="ml">Fed Rate</div><div class="mv" style="font-size:14px;color:var(--b)">'+d.rateEnv+'</div></div>';
+  html+='<div class="mb"><div class="ml">CPI YoY</div><div class="mv" style="font-size:14px;color:var(--b)">'+d.inflationEnv+'</div></div>';
+  html+='<div class="mb"><div class="ml">VIX</div><div class="mv" style="font-size:14px;color:var(--b)">'+d.vixLevel+'</div></div>';
+  html+='<div class="mb"><div class="ml">Yield Curve</div><div class="mv" style="font-size:14px;color:var(--b)">'+d.yieldCurve+'</div></div>';
+  html+='<div class="mb"><div class="ml">Unemployment</div><div class="mv" style="font-size:14px;color:var(--b)">'+d.unemployment+'</div></div>';
+  html+='<div class="mb"><div class="ml">Risk Appetite</div><div class="mv" style="font-size:14px;color:'+col+'">'+d.riskAppetite+'</div></div>';
+  html+='</div>';
+  html+='<div style="margin-top:9px;padding-top:9px;border-top:1px solid var(--bd);font-size:9px;color:var(--t3);text-align:right">Data: Federal Reserve FRED + Yahoo Finance</div>';
+  html+='</div>';
+
+  /* Factor breakdown */
+  if(d.factors&&d.factors.length){
+    html+='<div class="card" style="margin-bottom:9px"><div style="font-size:11px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px">Factor Breakdown</div>';
+    d.factors.forEach(function(f){
+      var fc=sigCol[f.s]||'var(--t3)';
+      html+='<div style="display:flex;align-items:flex-start;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--bd)">';
+      html+='<div><div style="font-size:12px;font-weight:700">'+f.n+'</div><div style="font-size:10px;color:var(--t3);margin-top:2px">'+f.note+'</div></div>';
+      html+='<div style="text-align:right;flex-shrink:0;margin-left:9px"><div style="font-size:13px;font-weight:700;color:'+fc+'">'+f.v+'</div>';
+      html+='<div style="font-size:9px;font-weight:700;color:'+fc+';text-transform:uppercase;letter-spacing:.5px">'+f.s+'</div></div></div>';
+    });
+    html+='</div>';
+  }
+
+  /* Favor / Avoid */
   html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">';
-  if(d.favorStrategies&&d.favorStrategies.length){html+='<div class="card" style="margin-bottom:0"><div style="font-size:10px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">Favor</div>';d.favorStrategies.forEach(function(s){html+='<div style="font-size:11px;color:var(--t2);padding:4px 0;border-bottom:1px solid var(--bd)">'+s+'</div>';});html+='</div>';}
-  if(d.avoidStrategies&&d.avoidStrategies.length){html+='<div class="card" style="margin-bottom:0"><div style="font-size:10px;font-weight:700;color:var(--r);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">Avoid</div>';d.avoidStrategies.forEach(function(s){html+='<div style="font-size:11px;color:var(--t2);padding:4px 0;border-bottom:1px solid var(--bd)">'+s+'</div>';});html+='</div>';}
+  if(d.favorStrategies&&d.favorStrategies.length){
+    html+='<div class="card" style="margin-bottom:0"><div style="font-size:10px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">Favor</div>';
+    d.favorStrategies.forEach(function(s){html+='<div style="font-size:11px;color:var(--t2);padding:4px 0;border-bottom:1px solid var(--bd);line-height:1.4">'+s+'</div>';});
+    html+='</div>';
+  }
+  if(d.avoidStrategies&&d.avoidStrategies.length){
+    html+='<div class="card" style="margin-bottom:0"><div style="font-size:10px;font-weight:700;color:var(--r);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">Avoid</div>';
+    d.avoidStrategies.forEach(function(s){html+='<div style="font-size:11px;color:var(--t2);padding:4px 0;border-bottom:1px solid var(--bd);line-height:1.4">'+s+'</div>';});
+    html+='</div>';
+  }
   html+='</div>';
   wrap.innerHTML=html;
 }
