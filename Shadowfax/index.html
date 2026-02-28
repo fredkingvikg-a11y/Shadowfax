@@ -259,6 +259,7 @@ select option{background:var(--bg3)}
       </div>
       <div class="sbar"><div class="sneedle" id="fgi-n" style="left:50%"></div></div>
       <div class="slabs"><span>Extreme Fear</span><span>Neutral</span><span>Extreme Greed</span></div>
+      <div id="fgi-source" style="font-size:9px;color:var(--t3);text-align:center;margin-top:6px;font-weight:500">Source: CNN Fear &amp; Greed Index</div>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:22px;margin-bottom:11px">
       <span class="sec" style="margin:0">Macro Regime</span>
@@ -620,12 +621,31 @@ async function loadPrices(){
   setQ('h-spy','h-spy-c','^GSPC','idx');setQ('h-qqq','h-qqq-c','^IXIC','idx');setQ('h-vix','h-vix-c','^VIX','vix');setQ('h-tnx','h-tnx-c','^TNX','pct');setQ('h-gld','h-gld-c','GC=F','usd');setQ('h-oil','h-oil-c','CL=F','usd');
   setQ('h-nvda','h-nvda-c','NVDA','usd');setQ('h-aapl','h-aapl-c','AAPL','usd');setQ('h-tsla','h-tsla-c','TSLA','usd');setQ('h-meta','h-meta-c','META','usd');setQ('h-pltr','h-pltr-c','PLTR','usd');setQ('h-amd','h-amd-c','AMD','usd');
   renderWatchlist(cache);
-  var score,label,vix=cache['^VIX'],spx=cache['^GSPC'];
-  if(vix&&vix.price>1){var v=vix.price;if(v<12){score=88;label='Extreme Greed';}else if(v<15){score=72;label='Greed';}else if(v<20){score=52;label='Neutral';}else if(v<25){score=33;label='Fear';}else{score=14;label='Extreme Fear';}}
-  else if(spx&&spx.pct!==undefined){var p2=spx.pct;if(p2>1.5){score=82;label='Greed';}else if(p2>0.3){score=65;label='Greed';}else if(p2>-0.3){score=50;label='Neutral';}else if(p2>-1.5){score=35;label='Fear';}else{score=18;label='Extreme Fear';}}
-  if(score!==undefined){var badge=gel('fgi-badge'),needle=gel('fgi-n');if(badge){badge.textContent=label;badge.style.background=score>60?'var(--gd)':score>40?'var(--god)':'var(--rd)';badge.style.color=score>60?'var(--g)':score>40?'var(--go)':'var(--r)';}if(needle)needle.style.left=score+'%';}
+  loadFearAndGreed();
 }
 gel('refresh-btn').addEventListener('click',function(){window.location.reload();});
+
+async function loadFearAndGreed(){
+  try{
+    var r=await fetch('/api/fng',{signal:AbortSignal.timeout(8000)});
+    if(!r.ok)return;
+    var d=await r.json();
+    if(d.error||d.score===undefined)return;
+    var score=Math.round(d.score);
+    /* CNN ratings: Extreme Fear, Fear, Neutral, Greed, Extreme Greed */
+    var label=d.rating||( score>=75?'Extreme Greed':score>=55?'Greed':score>=45?'Neutral':score>=25?'Fear':'Extreme Fear');
+    var badge=gel('fgi-badge'),needle=gel('fgi-n');
+    if(badge){
+      badge.textContent=label+' ('+score+')';
+      badge.style.background=score>=75?'var(--gd)':score>=55?'var(--gd)':score>=45?'var(--god)':score>=25?'var(--rd)':'var(--rd)';
+      badge.style.color=score>=55?'var(--g)':score>=45?'var(--go)':'var(--r)';
+    }
+    if(needle)needle.style.left=score+'%';
+    /* update label under bar to show CNN source */
+    var src=document.getElementById('fgi-source');
+    if(src)src.textContent='Source: CNN Fear & Greed Index';
+  }catch(e){}
+}
 
 /* WATCHLIST */
 function renderWatchlist(cache){var wrap=gel('watchlist-wrap');if(!wrap)return;wrap.innerHTML='';if(!watchlist.length){var empty=document.createElement('div');empty.style.cssText='padding:20px;text-align:center;color:var(--t3);font-size:13px';empty.textContent='No tickers yet. Tap + Add to build your watchlist.';wrap.appendChild(empty);return;}watchlist.forEach(function(tk,i){var q=cache?cache[tk]:null,col=WL_COLORS[i%WL_COLORS.length];var price=(q&&q.price)?'$'+q.price.toFixed(2):'--',chgTxt=q?((q.chg>=0?'+ ':'-')+Math.abs(q.pct).toFixed(2)+'%'):'--',chgCls=q?(q.chg>=0?'up':'dn'):'';var row=document.createElement('div');row.className='wli';if(i===watchlist.length-1)row.style.borderBottom='none';var left=document.createElement('div');left.style.cssText='display:flex;align-items:center;gap:11px';var icon=document.createElement('div');icon.className='wlic';icon.style.cssText='background:'+col+'1a;color:'+col;icon.textContent=tk.length>4?tk.slice(0,4):tk;var nameEl=document.createElement('div');nameEl.style.cssText='font-size:15px;font-weight:700';nameEl.textContent=tk;left.appendChild(icon);left.appendChild(nameEl);var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('class','sp');svg.setAttribute('viewBox','0 0 60 28');var poly=document.createElementNS('http://www.w3.org/2000/svg','polyline');poly.setAttribute('points','0,18 10,14 20,16 30,10 40,12 50,8 60,10');poly.setAttribute('stroke',col);poly.setAttribute('stroke-width','1.5');poly.setAttribute('fill','none');svg.appendChild(poly);var right=document.createElement('div');right.style.cssText='display:flex;align-items:center;gap:8px';var pDiv=document.createElement('div');pDiv.style.cssText='text-align:right';var pVal=document.createElement('div');pVal.style.cssText='font-size:15px;font-weight:600';pVal.textContent=price;var cVal=document.createElement('div');cVal.className=chgCls;cVal.style.fontSize='11px';cVal.textContent=chgTxt;pDiv.appendChild(pVal);pDiv.appendChild(cVal);var rmBtn=document.createElement('button');rmBtn.className='wl-remove';rmBtn.textContent='x';(function(sym){rmBtn.addEventListener('click',function(){removeWL(sym);});})(tk);right.appendChild(pDiv);right.appendChild(rmBtn);row.appendChild(left);row.appendChild(svg);row.appendChild(right);wrap.appendChild(row);});}
@@ -1042,8 +1062,8 @@ async function getAIRecs(){if(journal.length<2){alert('Log at least 2 trades fir
   var t=ld('sfx_theme','dark');applyTheme(t);highlightThBtn(t);
   journal=ld('sfx_journal',[]);
   watchlist=ld('sfx_watchlist',['AAPL','PLTR','NVDA','SPY']);
-  renderWatchlist(null);renderJournal();populateExpiries();loadPrices();
-  setInterval(loadPrices,90000);
+  renderWatchlist(null);renderJournal();populateExpiries();loadPrices();loadFearAndGreed();
+  setInterval(loadPrices,90000);setInterval(loadFearAndGreed,300000);
 })();
 })();
 </script>
